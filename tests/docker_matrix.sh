@@ -27,6 +27,11 @@ for image in "${IMAGES[@]}"; do
       getent passwd root | grep -q "zsh$" || { echo "login shell not zsh"; exit 1; }
       cmp /src/configs/zshrc ~/.zshrc
       zsh -i -c exit </dev/null
+      cmp /src/configs/bash_aliases ~/.bash_aliases
+      rc=~/.bashrc; [ -f ~/.bash_profile ] && rc=~/.bash_profile
+      grep -q "source ~/.bash_aliases2" "$rc"
+      bash -ic "alias ll" </dev/null >/dev/null 2>&1 || bash -lc "shopt -s expand_aliases; source $rc; alias ll" >/dev/null
+      zsh -ic "alias ll" </dev/null >/dev/null
       test -f ~/.ssh/id_ed25519.pub
       for bin in zsh tmux vim nano htop git curl ssh sshd dig ip ping less sudo which file lsof zip; do command -v "$bin" >/dev/null || { echo "missing $bin"; exit 1; }; done
       cmp /src/configs/tmux.conf ~/.tmux.conf

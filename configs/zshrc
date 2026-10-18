@@ -83,3 +83,12 @@ unset _opencode_dir
 if command -v opencode-with-pass >/dev/null 2>&1; then
   opencode() { command opencode-with-pass "$@"; }
 fi
+
+# Load custom aliases in Zsh
+if [ -f ~/.bash_aliases ]; then
+    source ~/.bash_aliases
+fi
+
+if [ -f ~/.bash_aliases2 ]; then
+    source ~/.bash_aliases2
+fi

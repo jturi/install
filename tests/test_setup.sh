@@ -89,6 +89,33 @@ check symlink-replaced "file" "$([[ -f "${home}/.zshrc" && ! -L "${home}/.zshrc"
 check symlink-target-kept "linked" "$(cat "${WORK}/link-target")"
 check symlink-backup "1" "$(find "${home}" -maxdepth 1 -name '.zshrc.bak.*' | wc -l | tr -d ' ')"
 
+# Aliases: fresh home gets ~/.bash_aliases and a loader in ~/.bashrc.
+ah="${WORK}/alias_home"
+mkdir -p "${ah}"
+TARGET_HOME="${ah}" install_aliases >/dev/null
+check aliases-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah}/.bash_aliases" && echo same)"
+check aliases2-not-created "" "$(ls "${ah}/.bash_aliases2" 2>/dev/null)"
+check loader-in-bashrc "1" "$(grep -c 'source ~/.bash_aliases2' "${ah}/.bashrc")"
+check no-bashrc-backup-when-new "0" "$(find "${ah}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
+TARGET_HOME="${ah}" install_aliases >/dev/null
+check loader-not-duplicated "1" "$(grep -c 'source ~/.bash_aliases2' "${ah}/.bashrc")"
+check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+
+# Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
+# an existing ~/.bash_profile gets the loader (backed up), ~/.bashrc is untouched.
+ah2="${WORK}/alias_home2"
+mkdir -p "${ah2}"
+echo "alias mine='echo mine'" >"${ah2}/.bash_aliases"
+echo "# profile" >"${ah2}/.bash_profile"
+TARGET_HOME="${ah2}" install_aliases >/dev/null
+check own-aliases-kept "alias mine='echo mine'" "$(cat "${ah2}/.bash_aliases")"
+check aliases2-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah2}/.bash_aliases2" && echo same)"
+check loader-in-profile "1" "$(grep -c 'source ~/.bash_aliases2' "${ah2}/.bash_profile")"
+check profile-backup "# profile" "$(cat "${ah2}"/.bash_profile.bak.*)"
+check bashrc-untouched "" "$(ls "${ah2}/.bashrc" 2>/dev/null)"
+check loader-works "mine" "$(HOME="${ah2}" bash -c 'shopt -s expand_aliases; source ~/.bash_profile; alias mine >/dev/null && echo mine')"
+check zshrc-loads-aliases "1" "$(grep -c 'source ~/.bash_aliases2' "${ROOT}/configs/zshrc")"
+
 # macOS: nanorc points at the Homebrew prefix.
 home_mac="${WORK}/home_mac"
 mkdir -p "${home_mac}/.tmux/plugins/tpm"

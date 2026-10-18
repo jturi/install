@@ -336,7 +336,46 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
+  install_aliases
   install_tpm
+}
+
+# Block that loads both alias files; added to the bash startup file.
+ALIAS_LOADER='# Load custom aliases in Zsh
+if [ -f ~/.bash_aliases ]; then
+    source ~/.bash_aliases
+fi
+
+if [ -f ~/.bash_aliases2 ]; then
+    source ~/.bash_aliases2
+fi'
+
+# Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
+# the user already has their own ~/.bash_aliases. Then make bash load both.
+install_aliases() {
+  local src="${SCRIPT_DIR}/configs/bash_aliases"
+  local dst="${TARGET_HOME}/.bash_aliases"
+  if [[ -e "${dst}" ]] && ! files_equal "${src}" "${dst}"; then
+    info "Keeping your ${dst}; installing repo aliases as .bash_aliases2"
+    dst="${TARGET_HOME}/.bash_aliases2"
+  fi
+  install_file "${src}" "${dst}"
+
+  # ~/.bash_profile when it exists, else ~/.bashrc.
+  local rc="${TARGET_HOME}/.bash_profile"
+  [[ -f "${rc}" ]] || rc="${TARGET_HOME}/.bashrc"
+  if grep -qsF 'source ~/.bash_aliases2' "${rc}"; then
+    ok "${rc} already loads the alias files"
+    return 0
+  fi
+  backup_file "${rc}"
+  info "Adding alias loader to ${rc}"
+  if ((DRY_RUN)); then
+    printf '   [dry-run] append alias loader to %s\n' "${rc}"
+  else
+    printf '\n%s\n' "${ALIAS_LOADER}" >>"${rc}"
+  fi
+  ok "${rc}"
 }
 
 # .tmux.conf ends with `run ~/.tmux/plugins/tpm/tpm`, so TPM must exist.
