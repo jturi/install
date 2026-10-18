@@ -8,6 +8,7 @@
 #   rhel   — RHEL, Rocky, AlmaLinux, CentOS Stream (dnf/yum + EPEL)
 #
 # Usage: ./setup.sh [--dry-run] [--yes] [--no-packages] [--no-configs]
+#                   [--ssh-server] [--ssh-key | --no-ssh-key]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +21,8 @@ DRY_RUN=0
 ASSUME_YES=0
 DO_PACKAGES=1
 DO_CONFIGS=1
+DO_SSH_SERVER=0
+SSH_KEY_MODE=ask # ask | create | skip
 
 # config source (relative to configs/) -> target (relative to $TARGET_HOME)
 CONFIG_MAP=(
@@ -50,6 +53,9 @@ Options:
   -y, --yes          Do not ask for confirmation
       --no-packages  Skip package installation
       --no-configs   Skip config files
+      --ssh-server   Also install OpenSSH server and enable sshd
+      --ssh-key      Create an ed25519 SSH key if none exists (no prompt)
+      --no-ssh-key   Do not check for an SSH key
   -h, --help         Show this help
 EOF
 }
@@ -108,11 +114,21 @@ os_major_version() {
   printf '%s' "${v%%.*}"
 }
 
-# Map a generic package name to the distro name.
+# Map a generic package name to the distro name. Prints nothing when the
+# distro has no separate package for it (already in the base system).
 pkg_name() {
   local family="$1" pkg="$2"
   case "${family}:${pkg}" in
     fedora:vim | rhel:vim) echo vim-enhanced ;;
+    arch:openssh-client) echo openssh ;;
+    fedora:openssh-client | rhel:openssh-client) echo openssh-clients ;;
+    arch:openssh-server) echo openssh ;;
+    arch:procps | fedora:procps | rhel:procps) echo procps-ng ;;
+    fedora:iproute2 | rhel:iproute2) echo iproute ;;
+    debian:iputils) echo iputils-ping ;;
+    arch:dnsutils) echo bind ;;
+    fedora:dnsutils | rhel:dnsutils) echo bind-utils ;;
+    debian:which) ;;
     *) echo "${pkg}" ;;
   esac
 }
@@ -123,7 +139,8 @@ read_packages() {
   while IFS= read -r line || [[ -n "${line}" ]]; do
     line="${line%%#*}"
     line="${line//[[:space:]]/}"
-    [[ -n "${line}" ]] && pkg_name "${family}" "${line}"
+    [[ -n "${line}" ]] || continue
+    pkg_name "${family}" "${line}"
   done <"${PACKAGE_LIST}"
 }
 
@@ -138,6 +155,7 @@ install_packages() {
   local family="$1"
   local -a pkgs
   mapfile -t pkgs < <(read_packages "${family}")
+  ((DO_SSH_SERVER)) && pkgs+=("$(pkg_name "${family}" openssh-server)")
   if [[ "${family}" == "fedora" || "${family}" == "rhel" ]]; then
     local -a kept=()
     local pkg
@@ -168,6 +186,18 @@ install_packages() {
       ;;
     *) die "no installer for family '${family}'" ;;
   esac
+}
+
+# Enable and start the SSH daemon (service is "ssh" on Debian/Ubuntu).
+enable_ssh_server() {
+  local family="$1" svc=sshd
+  [[ "${family}" == "debian" ]] && svc=ssh
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    warn "systemd not running; enable ${svc} manually"
+    return 0
+  fi
+  info "Enabling ${svc}"
+  as_root systemctl enable --now "${svc}"
 }
 
 # htop lives in EPEL on RHEL and its clones.
@@ -241,6 +271,49 @@ install_tpm() {
   fi
 }
 
+# Print the first private key in ~/.ssh that has a matching .pub file.
+find_ssh_key() {
+  local pub
+  for pub in "${TARGET_HOME}/.ssh/"*.pub; do
+    [[ -f "${pub}" && -f "${pub%.pub}" ]] && { printf '%s\n' "${pub%.pub}"; return 0; }
+  done
+  return 1
+}
+
+# Offer to create an ed25519 key when the user has none.
+setup_ssh_key() {
+  [[ "${SSH_KEY_MODE}" == "skip" ]] && return 0
+  local key
+  if key="$(find_ssh_key)"; then
+    ok "SSH key found: ${key}"
+    return 0
+  fi
+  info "No SSH key found in ${TARGET_HOME}/.ssh"
+  if [[ "${SSH_KEY_MODE}" == "ask" ]]; then
+    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
+      warn "skipped SSH key; rerun with --ssh-key to create one"
+      return 0
+    fi
+    local reply
+    read -r -p "Create an ed25519 SSH key now? [Y/n] " reply
+    [[ -z "${reply}" || "${reply}" =~ ^[Yy] ]] || { warn "skipped SSH key"; return 0; }
+  fi
+  command -v ssh-keygen >/dev/null 2>&1 || ((DRY_RUN)) ||
+    { warn "ssh-keygen not found; install the OpenSSH client first"; return 0; }
+
+  key="${TARGET_HOME}/.ssh/id_ed25519"
+  local -a args=(-t ed25519 -f "${key}" -C "${USER:-$(id -un)}@$(hostname 2>/dev/null || uname -n)")
+  # Without a terminal ssh-keygen cannot ask for a passphrase.
+  [[ -t 0 ]] || args+=(-N "")
+  run mkdir -p "${TARGET_HOME}/.ssh"
+  run chmod 700 "${TARGET_HOME}/.ssh"
+  run ssh-keygen "${args[@]}"
+  if ((!DRY_RUN)); then
+    ok "Created ${key}. Public key (add it to GitHub/servers):"
+    cat "${key}.pub"
+  fi
+}
+
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || return 0
@@ -256,6 +329,9 @@ parse_args() {
       -y | --yes) ASSUME_YES=1 ;;
       --no-packages) DO_PACKAGES=0 ;;
       --no-configs) DO_CONFIGS=0 ;;
+      --ssh-server) DO_SSH_SERVER=1 ;;
+      --ssh-key) SSH_KEY_MODE=create ;;
+      --no-ssh-key) SSH_KEY_MODE=skip ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -272,11 +348,13 @@ main() {
   if ((DO_PACKAGES)); then
     if confirm "Install basic packages via ${family} package manager?"; then
       install_packages "${family}"
+      ((DO_SSH_SERVER)) && enable_ssh_server "${family}"
     else
       warn "skipped packages"
     fi
   fi
   ((DO_CONFIGS)) && install_configs
+  setup_ssh_key
   info "Done."
 }
 

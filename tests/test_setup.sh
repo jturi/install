@@ -47,9 +47,18 @@ check vim-fedora "vim-enhanced" "$(pkg_name fedora vim)"
 check vim-rhel "vim-enhanced" "$(pkg_name rhel vim)"
 check vim-arch "vim" "$(pkg_name arch vim)"
 check vim-debian "vim" "$(pkg_name debian vim)"
+check ssh-arch "openssh" "$(pkg_name arch openssh-client)"
+check ssh-debian "openssh-client" "$(pkg_name debian openssh-client)"
+check ssh-fedora "openssh-clients" "$(pkg_name fedora openssh-client)"
+check sshd-arch "openssh" "$(pkg_name arch openssh-server)"
+check sshd-rhel "openssh-server" "$(pkg_name rhel openssh-server)"
+check dns-fedora "bind-utils" "$(pkg_name fedora dnsutils)"
+check ping-debian "iputils-ping" "$(pkg_name debian iputils)"
 
 printf '%s\n' '# comment' '' 'tmux' 'vim  # editor' >"${WORK}/pkgs.txt"
 check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages fedora | xargs)"
+printf '%s\n' tmux which vim >"${WORK}/pkgs.txt"
+check package-list-skip-empty "tmux vim" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages debian | xargs)"
 
 # Config install: fresh, idempotent, backup on change.
 home="${WORK}/home"
@@ -63,6 +72,24 @@ echo "old" >"${home}/.nanorc"
 TARGET_HOME="${home}" install_configs >/dev/null
 check backup-created "1" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | wc -l)"
 check backup-content "old" "$(cat "${home}"/.nanorc.bak.*)"
+
+# SSH key detection.
+check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
+mkdir -p "${home}/.ssh"
+touch "${home}/.ssh/id_github.pub"
+check pub-without-private "" "$(TARGET_HOME="${home}" find_ssh_key)"
+touch "${home}/.ssh/id_github"
+check custom-key-name "${home}/.ssh/id_github" "$(TARGET_HOME="${home}" find_ssh_key)"
+check skip-when-key-exists "found" "$(TARGET_HOME="${home}" SSH_KEY_MODE=create setup_ssh_key | grep -o found)"
+
+if command -v ssh-keygen >/dev/null 2>&1; then
+  home2="${WORK}/home2"
+  mkdir -p "${home2}"
+  TARGET_HOME="${home2}" SSH_KEY_MODE=create setup_ssh_key </dev/null >/dev/null
+  check key-created "yes" "$([[ -f "${home2}/.ssh/id_ed25519" && -f "${home2}/.ssh/id_ed25519.pub" ]] && echo yes)"
+  check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh")"
+  check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=ask setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
+fi
 
 if ((FAILS)); then
   printf '%d test(s) failed\n' "${FAILS}"
