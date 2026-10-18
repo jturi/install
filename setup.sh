@@ -178,7 +178,8 @@ install_packages() {
   done < <(read_packages "${family}")
   if ((DO_SSH_SERVER)); then
     pkg="$(pkg_name "${family}" openssh-server)"
-    [[ -n "${pkg}" ]] && pkgs+=("${pkg}")
+    # On Arch the client package already includes the server.
+    [[ -n "${pkg}" && " ${pkgs[*]} " != *" ${pkg} "* ]] && pkgs+=("${pkg}")
   fi
   if [[ "${family}" == "fedora" || "${family}" == "rhel" ]]; then
     local -a kept=()

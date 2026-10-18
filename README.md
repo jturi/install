@@ -148,15 +148,27 @@ exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
 - Config: put the file in `configs/` and add `"src:target"` to `CONFIG_MAP`
   in `setup.sh`.
 
-## Tests
+## Make targets
 
-```sh
-make lint         # shellcheck
-make test         # unit tests: distro detection, name mapping, config copy
-make test-bash32  # same tests + macOS dry-run under bash 3.2 (macOS system bash)
-make test-docker  # real Linux run in archlinux, ubuntu:24.04, debian:12, fedora,
-                  # rockylinux 9, almalinux 9 containers
-```
+Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
+`ARGS`, for example `make install ARGS="--ssh-server"`.
+
+| Target | Does |
+|--------|------|
+| `make install` | full setup, with the SSH key and zsh prompts |
+| `make install-yes` | full setup, no prompts |
+| `make dry-run` | show what would run, change nothing |
+| `make packages` / `make configs` | only packages / only configs |
+| `make ssh-key` | create an ed25519 key if none exists |
+| `make ssh-server` | install and enable the OpenSSH server |
+| `make zsh-default` | make zsh the login shell |
+| `make lint` | shellcheck |
+| `make test` | unit tests: distro detection, name mapping, configs, aliases |
+| `make check` | lint + test |
+| `make test-bash32` | unit tests + macOS dry-run under bash 3.2 |
+| `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers |
+| `make test-all` | every test above |
+| `make sync-dotfiles` | refresh `tmux.conf` and `zshrc` from the dotfiles repo |
 
 ## Sync configs from dotfiles
 
@@ -164,6 +176,6 @@ make test-docker  # real Linux run in archlinux, ubuntu:24.04, debian:12, fedora
 cp ../dotfiles/dot_tmux.conf configs/tmux.conf
 ```
 
-`configs/zshrc` is `dotfiles/dot_zshrc` plus the alias loader block at the
-end. After copying a new `dot_zshrc`, add that block back (it is shown in
-the Aliases section).
+Or `make sync-dotfiles` (reads `DOTFILES=../dotfiles`): it copies
+`dot_tmux.conf` and rebuilds `configs/zshrc` from `dot_zshrc` plus the alias
+loader block, then shows the diff.

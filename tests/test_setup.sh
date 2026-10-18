@@ -66,6 +66,9 @@ check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_p
 printf '%s\n' tmux which vim >"${WORK}/pkgs.txt"
 check package-list-skip-empty "tmux vim" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages debian | xargs)"
 
+# --ssh-server on Arch: openssh is listed once.
+check arch-sshd-dedup "1" "$(DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+
 # Config install: fresh, idempotent, backup on change.
 home="${WORK}/home"
 mkdir -p "${home}/.tmux/plugins/tpm"
