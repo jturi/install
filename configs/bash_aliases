@@ -1,0 +1,22 @@
+# ~/.bash_aliases (from the install repo) — sourced by bash and zsh.
+# Put your own aliases here or in ~/.bash_aliases2.
+
+# listing
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+
+# navigation
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# safety: ask before overwriting
+alias cp='cp -i'
+alias mv='mv -i'
+
+# colors
+alias grep='grep --color=auto'
+
+# tmux
+alias ta='tmux attach || tmux new'
+alias tl='tmux ls'

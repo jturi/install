@@ -84,14 +84,39 @@ package manager:
   - `tmux.conf` → `~/.tmux.conf` (copy of `dotfiles/dot_tmux.conf`, prefix `Ctrl+a`)
   - `nanorc` → `~/.nanorc`
   - `zshrc` → `~/.zshrc` (copy of `dotfiles/dot_zshrc`; the `~/.bash_*` alias
-    files and OpenCode lines it references are skipped when absent)
+    files and OpenCode lines it references are skipped when absent), plus a
+    block at the end that loads `~/.bash_aliases` and `~/.bash_aliases2`
+  - `bash_aliases` → `~/.bash_aliases`, or `~/.bash_aliases2` (see below)
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
 Before a file changes, `setup.sh` copies it to `<file>.bak.$(date +%Y%m%d_%H%M%S)`,
 for example `~/.zshrc.bak.20261018_191502`. This covers every config in
-`configs/` and the `~/.zprofile` line on macOS. A file that is already
+`configs/`, the alias loader in `~/.bash_profile`/`~/.bashrc`, and the
+`~/.zprofile` line on macOS. A file that is already
 identical to the repo version is left alone, so reruns make no new backups.
+
+## Aliases
+
+`configs/bash_aliases` holds a small starter set (`ll`, `la`, `..`, `cp -i`,
+`ta` for tmux attach, ...). Both bash and zsh load it.
+
+- No `~/.bash_aliases` yet: it is created from the repo file.
+- You already have your own `~/.bash_aliases`: it is kept as is, and the repo
+  file goes to `~/.bash_aliases2`.
+- The loader block below is appended to `~/.bash_profile` if that file
+  exists, else to `~/.bashrc` (backed up first). It is not added twice.
+
+```sh
+# Load custom aliases in Zsh
+if [ -f ~/.bash_aliases ]; then
+    source ~/.bash_aliases
+fi
+
+if [ -f ~/.bash_aliases2 ]; then
+    source ~/.bash_aliases2
+fi
+```
 
 ## Login shell
 
@@ -131,8 +156,12 @@ make test-docker  # real Linux run in archlinux, ubuntu:24.04, debian:12, fedora
                   # rockylinux 9, almalinux 9 containers
 ```
 
-## Sync tmux.conf from dotfiles
+## Sync configs from dotfiles
 
 ```sh
 cp ../dotfiles/dot_tmux.conf configs/tmux.conf
 ```
+
+`configs/zshrc` is `dotfiles/dot_zshrc` plus the alias loader block at the
+end. After copying a new `dot_zshrc`, add that block back (it is shown in
+the Aliases section).
