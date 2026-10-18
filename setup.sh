@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Bootstrap a new Linux machine: install basic packages and drop in configs.
+# Bootstrap a new Linux or macOS machine: install basic packages and configs.
 #
-# Supported families (auto-detected from /etc/os-release):
+# Supported families (auto-detected from uname and /etc/os-release):
 #   arch   — Arch, CachyOS, Manjaro, EndeavourOS   (pacman)
 #   debian — Debian, Ubuntu, Mint, Pop!_OS        (apt-get)
 #   fedora — Fedora                               (dnf)
 #   rhel   — RHEL, Rocky, AlmaLinux, CentOS Stream (dnf/yum + EPEL)
+#   macos  — macOS                                (Homebrew)
+#
+# Works with the bash 3.2 that ships with macOS.
 #
 # Usage: ./setup.sh [--dry-run] [--yes] [--no-packages] [--no-configs]
 #                   [--ssh-server] [--ssh-key | --no-ssh-key]
@@ -13,6 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
+UNAME_S="${UNAME_S:-$(uname -s)}"
 PACKAGE_LIST="${PACKAGE_LIST:-${SCRIPT_DIR}/packages/base.txt}"
 TARGET_HOME="${TARGET_HOME:-${HOME}}"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
@@ -45,7 +49,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
@@ -54,6 +58,7 @@ Options:
       --no-packages  Skip package installation
       --no-configs   Skip config files
       --ssh-server   Also install OpenSSH server and enable sshd
+                     (macOS: turn on Remote Login)
       --ssh-key      Create an ed25519 SSH key if none exists (no prompt)
       --no-ssh-key   Do not check for an SSH key
   -h, --help         Show this help
@@ -86,8 +91,9 @@ os_field() {
   (. "${OS_RELEASE_FILE}" && printf '%s' "${!1:-}")
 }
 
-# Print the distro family: arch | debian | fedora | rhel.
+# Print the distro family: arch | debian | fedora | rhel | macos.
 detect_family() {
+  [[ "${UNAME_S}" == "Darwin" ]] && { echo macos; return 0; }
   [[ -r "${OS_RELEASE_FILE}" ]] || die "cannot read ${OS_RELEASE_FILE}"
   local id id_like
   id="$(os_field ID)"
@@ -129,6 +135,12 @@ pkg_name() {
     arch:dnsutils) echo bind ;;
     fedora:dnsutils | rhel:dnsutils) echo bind-utils ;;
     debian:which) ;;
+    # macOS ships these (or a BSD equivalent) in the base system.
+    macos:less | macos:man-db | macos:sudo | macos:procps | macos:lsof | macos:which | \
+      macos:file | macos:diffutils | macos:openssh-client | macos:openssh-server | \
+      macos:curl | macos:iproute2 | macos:iputils | macos:dnsutils | \
+      macos:ca-certificates | macos:tar | macos:gzip | macos:zip | macos:unzip) ;;
+    macos:bash-completion) echo bash-completion@2 ;;
     *) echo "${pkg}" ;;
   esac
 }
@@ -153,16 +165,22 @@ skip_installed_variant() {
 
 install_packages() {
   local family="$1"
-  local -a pkgs
-  mapfile -t pkgs < <(read_packages "${family}")
-  ((DO_SSH_SERVER)) && pkgs+=("$(pkg_name "${family}" openssh-server)")
+  local -a pkgs=()
+  local pkg
+  # while-read instead of mapfile: macOS bash 3.2 has no mapfile.
+  while IFS= read -r pkg; do
+    pkgs+=("${pkg}")
+  done < <(read_packages "${family}")
+  if ((DO_SSH_SERVER)); then
+    pkg="$(pkg_name "${family}" openssh-server)"
+    [[ -n "${pkg}" ]] && pkgs+=("${pkg}")
+  fi
   if [[ "${family}" == "fedora" || "${family}" == "rhel" ]]; then
     local -a kept=()
-    local pkg
-    for pkg in "${pkgs[@]}"; do
+    for pkg in ${pkgs[@]+"${pkgs[@]}"}; do
       skip_installed_variant "${pkg}" || kept+=("${pkg}")
     done
-    pkgs=("${kept[@]}")
+    pkgs=(${kept[@]+"${kept[@]}"})
   fi
   ((${#pkgs[@]})) || { warn "no packages in ${PACKAGE_LIST}"; return 0; }
   info "Installing (${family}): ${pkgs[*]}"
@@ -184,13 +202,60 @@ install_packages() {
       enable_epel "${pm}"
       as_root "${pm}" install -y "${pkgs[@]}"
       ;;
+    macos)
+      ensure_brew
+      run brew install "${pkgs[@]}"
+      ;;
     *) die "no installer for family '${family}'" ;;
   esac
+}
+
+# Print the Homebrew prefix: from brew if on PATH, else the default location.
+brew_prefix() {
+  if command -v brew >/dev/null 2>&1; then
+    brew --prefix
+  elif [[ "$(uname -m)" == "arm64" ]]; then
+    echo /opt/homebrew
+  else
+    echo /usr/local
+  fi
+}
+
+# Install Homebrew if missing and put it on PATH for this run and for zsh.
+ensure_brew() {
+  [[ "${EUID}" -ne 0 ]] || die "on macOS run setup.sh as your normal user, not root"
+  local brew_bin
+  brew_bin="$(brew_prefix)/bin/brew"
+  if ! command -v brew >/dev/null 2>&1 && [[ ! -x "${brew_bin}" ]]; then
+    info "Installing Homebrew (official installer, asks for your password)"
+    if ((DRY_RUN)); then
+      # shellcheck disable=SC2016  # print the command, do not run it
+      printf '   [dry-run] %s\n' '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+      return 0
+    fi
+    # --yes: let the official installer run without its own prompts.
+    ((ASSUME_YES)) && export NONINTERACTIVE=1
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  fi
+  if ! command -v brew >/dev/null 2>&1 && [[ -x "${brew_bin}" ]]; then
+    eval "$("${brew_bin}" shellenv)"
+    local line="eval \"\$(${brew_bin} shellenv)\""
+    if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
+      info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
+      printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
+    fi
+  fi
 }
 
 # Enable and start the SSH daemon (service is "ssh" on Debian/Ubuntu).
 enable_ssh_server() {
   local family="$1" svc=sshd
+  if [[ "${family}" == "macos" ]]; then
+    info "Turning on Remote Login (sshd)"
+    as_root systemsetup -setremotelogin on ||
+      warn "could not turn on Remote Login; use System Settings > General > Sharing"
+    return 0
+  fi
   [[ "${family}" == "debian" ]] && svc=ssh
   if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
     warn "systemd not running; enable ${svc} manually"
@@ -244,11 +309,20 @@ install_file() {
 }
 
 install_configs() {
+  local family="${1:-}"
   info "Installing configs into ${TARGET_HOME}"
-  local entry
+  local entry src tmp_dir=""
   for entry in "${CONFIG_MAP[@]}"; do
-    install_file "${SCRIPT_DIR}/configs/${entry%%:*}" "${TARGET_HOME}/${entry#*:}"
+    src="${SCRIPT_DIR}/configs/${entry%%:*}"
+    # Homebrew nano keeps its syntax files under the brew prefix.
+    if [[ "${family}" == "macos" && "${entry%%:*}" == "nanorc" ]]; then
+      [[ -n "${tmp_dir}" ]] || tmp_dir="$(mktemp -d)"
+      sed "s|/usr/share/nano|$(brew_prefix)/share/nano|" "${src}" >"${tmp_dir}/nanorc"
+      src="${tmp_dir}/nanorc"
+    fi
+    install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
+  [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
   install_tpm
 }
 
@@ -353,7 +427,7 @@ main() {
       warn "skipped packages"
     fi
   fi
-  ((DO_CONFIGS)) && install_configs
+  ((DO_CONFIGS)) && install_configs "${family}"
   setup_ssh_key
   info "Done."
 }
