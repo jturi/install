@@ -13,7 +13,8 @@ cd ~/repos/install
 ./setup.sh --dry-run  # show what would run, change nothing
 ```
 
-Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`, `-h/--help`.
+Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`,
+`--ssh-server`, `--ssh-key`, `--no-ssh-key`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
 only. It runs as root without `sudo` when you are root.
@@ -32,15 +33,33 @@ package manager:
 
 ## What it installs
 
-- Packages: `packages/base.txt` (tmux, vim, nano, htop, git, curl, wget,
-  rsync, tree, unzip, diffutils, jq, ca-certificates). Names that differ per
-  distro are mapped in `pkg_name` in `setup.sh` (for example `vim` →
-  `vim-enhanced` on Fedora/RHEL).
+- Packages: `packages/base.txt`, grouped:
+  - editors/terminal: tmux, vim, nano, less, bash-completion, man-db
+  - system: sudo, htop, procps, lsof, which, file, diffutils
+  - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
+  - files: tree, tar, gzip, zip, unzip, jq
+
+  Names that differ per distro are mapped in `pkg_name` in `setup.sh` (for
+  example `openssh-client` → `openssh` on Arch, `openssh-clients` on
+  Fedora/RHEL; `dnsutils` → `bind` / `bind-utils`).
+- `--ssh-server`: also installs the OpenSSH server and runs
+  `systemctl enable --now sshd` (`ssh` on Debian/Ubuntu). Off by default.
 - Configs (`configs/` → `$HOME`):
   - `tmux.conf` → `~/.tmux.conf` (copy of `dotfiles/dot_tmux.conf`, prefix `Ctrl+a`)
   - `nanorc` → `~/.nanorc`
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
+
+## SSH key
+
+After the configs, `setup.sh` checks `~/.ssh` for a key pair (any `*.pub`
+with its private key, so custom names like `id_github` count). If none
+exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
+(which asks for a passphrase), and prints the public key.
+
+- `--ssh-key`: create the key without asking (empty passphrase when there is no terminal).
+- `--no-ssh-key`: skip the check.
+- `--yes`, `--dry-run`, or no terminal: never creates a key, only warns.
 
 An existing config that differs is moved to `<file>.bak.<timestamp>` first.
 Reruns are safe: identical files are left alone.

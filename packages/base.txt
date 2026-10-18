@@ -1,16 +1,39 @@
 # Basic packages installed on every distro.
 # One generic name per line. setup.sh maps names that differ per distro
 # (see pkg_name in setup.sh). Lines starting with # are ignored.
+
+# editors / terminal
 tmux
 vim
 nano
+less
+bash-completion
+man-db
+
+# system
+sudo
 htop
+procps
+lsof
+which
+file
+diffutils
+
+# network
 git
+openssh-client
 curl
 wget
 rsync
-tree
-unzip
-diffutils
-jq
+iproute2
+iputils
+dnsutils
 ca-certificates
+
+# files / archives
+tree
+tar
+gzip
+zip
+unzip
+jq
