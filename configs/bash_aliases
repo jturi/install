@@ -20,3 +20,14 @@ alias grep='grep --color=auto'
 # tmux
 alias ta='tmux attach || tmux new'
 alias tl='tmux ls'
+
+# tm [session]: attach-or-create (default tmux1); inside tmux, switch client instead of nesting.
+tm() {
+  command -v tmux >/dev/null 2>&1 || { echo "tm: tmux is not installed" >&2; return 127; }
+  local s="${1:-tmux1}"
+  if [[ -n ${TMUX:-} ]]; then
+    TERM=xterm-256color tmux new-session -Ad -s "$s" && tmux switch-client -t "$s"
+  else
+    TERM=xterm-256color tmux new-session -A -s "$s"
+  fi
+}

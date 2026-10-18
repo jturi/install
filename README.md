@@ -99,7 +99,9 @@ identical to the repo version is left alone, so reruns make no new backups.
 ## Aliases
 
 `configs/bash_aliases` holds a small starter set (`ll`, `la`, `..`, `cp -i`,
-`ta` for tmux attach, ...). Both bash and zsh load it.
+`ta` for tmux attach, ...) and the `tm [session]` function: attach to or
+create a tmux session (default `tmux1`); inside tmux it switches to the
+session instead of nesting. Both bash and zsh load it.
 
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
