@@ -1,0 +1,17 @@
+# ~/.nanorc (from dotfiles)
+# undo alt-u
+# redo alt-e
+# go to top alt-|
+# go to end alt-/
+# select text alt-a
+# press alt-#  to show line numbers
+
+set autoindent
+set casesensitive
+set historylog
+set nowrap
+set tabsize 4
+set tabstospaces
+
+## syntax highlighting (glob works on Arch, Debian/Ubuntu, Fedora and RHEL)
+include "/usr/share/nano/*.nanorc"
