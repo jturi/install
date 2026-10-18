@@ -56,6 +56,8 @@ check sshd-rhel "openssh-server" "$(pkg_name rhel openssh-server)"
 check dns-fedora "bind-utils" "$(pkg_name fedora dnsutils)"
 check ping-debian "iputils-ping" "$(pkg_name debian iputils)"
 check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
+check zsh-arch "zsh" "$(pkg_name arch zsh)"
+check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
 check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
 
@@ -69,6 +71,7 @@ home="${WORK}/home"
 mkdir -p "${home}/.tmux/plugins/tpm"
 TARGET_HOME="${home}" install_configs >/dev/null
 check tmux-conf-copied "same" "$(cmp -s "${ROOT}/configs/tmux.conf" "${home}/.tmux.conf" && echo same)"
+check zshrc-copied "same" "$(cmp -s "${ROOT}/configs/zshrc" "${home}/.zshrc" && echo same)"
 check nanorc-copied "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" && echo same)"
 TARGET_HOME="${home}" install_configs >/dev/null
 check idempotent-no-backup "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
@@ -76,6 +79,15 @@ echo "old" >"${home}/.nanorc"
 TARGET_HOME="${home}" install_configs >/dev/null
 check backup-created "1" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | wc -l | tr -d ' ')"
 check backup-content "old" "$(cat "${home}"/.nanorc.bak.*)"
+check backup-name-format "yes" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | grep -Eq '\.nanorc\.bak\.[0-9]{8}_[0-9]{6}$' && echo yes)"
+check new-file-installed "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" && echo same)"
+# A symlinked target is backed up and replaced by a real file; the link target is untouched.
+echo "linked" >"${WORK}/link-target"
+rm -f "${home}/.zshrc" && ln -s "${WORK}/link-target" "${home}/.zshrc"
+TARGET_HOME="${home}" install_configs >/dev/null
+check symlink-replaced "file" "$([[ -f "${home}/.zshrc" && ! -L "${home}/.zshrc" ]] && echo file)"
+check symlink-target-kept "linked" "$(cat "${WORK}/link-target")"
+check symlink-backup "1" "$(find "${home}" -maxdepth 1 -name '.zshrc.bak.*' | wc -l | tr -d ' ')"
 
 # macOS: nanorc points at the Homebrew prefix.
 home_mac="${WORK}/home_mac"
@@ -102,6 +114,10 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh" 2>/dev/null || stat -f %Lp "${home2}/.ssh")"
   check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=ask setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
 fi
+
+# zsh login shell: ask mode without a terminal never changes anything.
+check zsh-ask-noninteractive "" "$(ZSH_DEFAULT_MODE=ask setup_zsh_default </dev/null 2>/dev/null | grep -i 'setting login shell')"
+check zsh-skip "" "$(ZSH_DEFAULT_MODE=skip setup_zsh_default 2>&1)"
 
 if ((FAILS)); then
   printf '%d test(s) failed\n' "${FAILS}"

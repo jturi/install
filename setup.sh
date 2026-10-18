@@ -12,6 +12,7 @@
 #
 # Usage: ./setup.sh [--dry-run] [--yes] [--no-packages] [--no-configs]
 #                   [--ssh-server] [--ssh-key | --no-ssh-key]
+#                   [--zsh-default | --no-zsh-default]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,11 +28,13 @@ DO_PACKAGES=1
 DO_CONFIGS=1
 DO_SSH_SERVER=0
 SSH_KEY_MODE=ask # ask | create | skip
+ZSH_DEFAULT_MODE=ask # ask | change | skip
 
 # config source (relative to configs/) -> target (relative to $TARGET_HOME)
 CONFIG_MAP=(
   "tmux.conf:.tmux.conf"
   "nanorc:.nanorc"
+  "zshrc:.zshrc"
 )
 
 if [[ -t 1 ]]; then
@@ -49,7 +52,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
@@ -61,6 +64,8 @@ Options:
                      (macOS: turn on Remote Login)
       --ssh-key      Create an ed25519 SSH key if none exists (no prompt)
       --no-ssh-key   Do not check for an SSH key
+      --zsh-default  Make zsh the login shell (no prompt)
+      --no-zsh-default  Keep the current login shell
   -h, --help         Show this help
 EOF
 }
@@ -139,7 +144,7 @@ pkg_name() {
     macos:less | macos:man-db | macos:sudo | macos:procps | macos:lsof | macos:which | \
       macos:file | macos:diffutils | macos:openssh-client | macos:openssh-server | \
       macos:curl | macos:iproute2 | macos:iputils | macos:dnsutils | \
-      macos:ca-certificates | macos:tar | macos:gzip | macos:zip | macos:unzip) ;;
+      macos:ca-certificates | macos:zsh | macos:tar | macos:gzip | macos:zip | macos:unzip) ;;
     macos:bash-completion) echo bash-completion@2 ;;
     *) echo "${pkg}" ;;
   esac
@@ -242,6 +247,7 @@ ensure_brew() {
     local line="eval \"\$(${brew_bin} shellenv)\""
     if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
       info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
+      backup_file "${TARGET_HOME}/.zprofile"
       printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
     fi
   fi
@@ -289,7 +295,17 @@ files_equal() {
   fi
 }
 
-# Copy src to dst. Back up a different existing dst first; skip if identical.
+# Copy an existing file to <file>.bak.YYYYmmdd_HHMMSS before it changes.
+# Does nothing when the file does not exist.
+backup_file() {
+  local file="$1" backup
+  [[ -e "${file}" || -L "${file}" ]] || return 0
+  backup="${file}.bak.$(date +%Y%m%d_%H%M%S)"
+  info "Backing up ${file} -> ${backup}"
+  run cp -P "${file}" "${backup}"
+}
+
+# Copy src to dst. Back up an existing dst first; skip if identical.
 install_file() {
   local src="$1" dst="$2"
   [[ -f "${src}" ]] || die "missing config source: ${src}"
@@ -297,12 +313,9 @@ install_file() {
     ok "${dst} (unchanged)"
     return 0
   fi
-  if [[ -e "${dst}" || -L "${dst}" ]]; then
-    local backup
-    backup="${dst}.bak.$(date +%Y%m%d%H%M%S)"
-    info "Backing up ${dst} -> ${backup}"
-    run mv "${dst}" "${backup}"
-  fi
+  backup_file "${dst}"
+  # Remove a symlink so cp writes a new file, not through the link.
+  [[ -L "${dst}" ]] && run rm -f "${dst}"
   run mkdir -p "$(dirname "${dst}")"
   run cp "${src}" "${dst}"
   ok "${dst}"
@@ -388,6 +401,55 @@ setup_ssh_key() {
   fi
 }
 
+# Print the login shell of the current user.
+login_shell() {
+  local user
+  user="$(id -un)"
+  if command -v getent >/dev/null 2>&1; then
+    getent passwd "${user}" | cut -d: -f7
+  elif [[ "${UNAME_S}" == "Darwin" ]]; then
+    dscl . -read "/Users/${user}" UserShell | awk '{print $2}'
+  else
+    printf '%s\n' "${SHELL:-}"
+  fi
+}
+
+# Offer to make zsh the login shell.
+setup_zsh_default() {
+  [[ "${ZSH_DEFAULT_MODE}" == "skip" ]] && return 0
+  local zsh_path current
+  zsh_path="$(command -v zsh 2>/dev/null || true)"
+  if [[ -z "${zsh_path}" ]]; then
+    if ((DRY_RUN)); then
+      zsh_path="/bin/zsh"
+    else
+      warn "zsh not installed; login shell unchanged"
+      return 0
+    fi
+  fi
+  current="$(login_shell)"
+  if [[ "${current##*/}" == "zsh" ]]; then
+    ok "login shell is already zsh (${current})"
+    return 0
+  fi
+  if [[ "${ZSH_DEFAULT_MODE}" == "ask" ]]; then
+    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
+      info "login shell is ${current:-unknown}; rerun with --zsh-default to switch to zsh"
+      return 0
+    fi
+    local reply
+    read -r -p "Make zsh your login shell (now ${current:-unknown})? [y/N] " reply
+    [[ "${reply}" =~ ^[Yy] ]] || { info "login shell unchanged"; return 0; }
+  fi
+  info "Setting login shell to ${zsh_path}"
+  if [[ "${UNAME_S}" == "Darwin" ]]; then
+    run chsh -s "${zsh_path}"
+  else
+    as_root usermod -s "${zsh_path}" "$(id -un)"
+  fi
+  ((DRY_RUN)) || ok "login shell set to zsh; log out and back in to use it"
+}
+
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || return 0
@@ -406,6 +468,8 @@ parse_args() {
       --ssh-server) DO_SSH_SERVER=1 ;;
       --ssh-key) SSH_KEY_MODE=create ;;
       --no-ssh-key) SSH_KEY_MODE=skip ;;
+      --zsh-default) ZSH_DEFAULT_MODE=change ;;
+      --no-zsh-default) ZSH_DEFAULT_MODE=skip ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -429,6 +493,7 @@ main() {
   fi
   ((DO_CONFIGS)) && install_configs "${family}"
   setup_ssh_key
+  setup_zsh_default
   info "Done."
 }
 
