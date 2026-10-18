@@ -50,6 +50,9 @@ package manager:
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
+An existing config that differs is moved to `<file>.bak.<timestamp>` first.
+Reruns are safe: identical files are left alone.
+
 ## SSH key
 
 After the configs, `setup.sh` checks `~/.ssh` for a key pair (any `*.pub`
@@ -60,9 +63,6 @@ exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
 - `--ssh-key`: create the key without asking (empty passphrase when there is no terminal).
 - `--no-ssh-key`: skip the check.
 - `--yes`, `--dry-run`, or no terminal: never creates a key, only warns.
-
-An existing config that differs is moved to `<file>.bak.<timestamp>` first.
-Reruns are safe: identical files are left alone.
 
 ## Add more
 
