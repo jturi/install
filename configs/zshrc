@@ -1,0 +1,85 @@
+################################################################################
+# .zshrc — zsh shell configuration
+################################################################################
+# Shares bash alias files for cross-shell consistency.
+# Sources ~/.bash_{host,nav,git,kube,help,core}.
+# bash-only sections (PS1, bash-only functions) are guarded
+# with [[ -n "$BASH" ]] internally.
+################################################################################
+
+# Only default a blank/unknown TERM; never clobber a real value inherited from
+# a remote session (e.g. xterm-ghostty over SSH).
+if [[ -z "$TERM" ]] || ! infocmp "$TERM" >/dev/null 2>&1; then
+  export TERM=xterm-256color
+fi
+
+# Set up the prompt
+
+autoload -Uz promptinit
+promptinit
+prompt adam1
+
+setopt histignorealldups sharehistory
+
+# Use emacs keybindings even if our EDITOR is set to vi
+bindkey -e
+
+# Keep 10000 lines of history within the shell and save it to ~/.zsh_history:
+HISTSIZE=10000
+SAVEHIST=10000
+HISTFILE=~/.zsh_history
+
+# Use modern completion system
+autoload -Uz compinit
+compinit
+
+zstyle ':completion:*' auto-description 'specify: %d'
+zstyle ':completion:*' completer _expand _complete _correct _approximate
+zstyle ':completion:*' format 'Completing %d'
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*' menu select=2
+command -v dircolors >/dev/null 2>&1 && eval "$(dircolors -b)"
+zstyle ':completion:*:default' list-colors ${(s.:.)LS_COLORS}
+zstyle ':completion:*' list-prompt %SAt %p: Hit TAB for more, or the character to insert%s
+zstyle ':completion:*' matcher-list '' 'm:{a-z}={A-Z}' 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=* l:|=*'
+zstyle ':completion:*' menu select=long
+zstyle ':completion:*' select-prompt %SScrolling active: current selection at %p%s
+zstyle ':completion:*' use-compctl false
+zstyle ':completion:*' verbose true
+
+zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#)*=0=01;31'
+zstyle ':completion:*:kill:*' command 'ps -u $USER -o pid,%cpu,tty,cputime,cmd'
+
+# Central git repository location; shared alias files reference $REPOS
+export REPOS="${REPOS:-$HOME/repos}"
+
+# Shared aliases — bash-only sections guarded internally
+for _f in ~/.bash_host ~/.bash_nav ~/.bash_git ~/.bash_kube ~/.bash_help ~/.bash_core; do
+    [ -f "$_f" ] && source "$_f"
+done
+unset _f
+
+# fzf key bindings (Ctrl+R history search, Ctrl+T file search, Alt+C cd)
+if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then
+    source /usr/share/doc/fzf/examples/key-bindings.zsh
+elif [ -f /usr/share/fzf/key-bindings.zsh ]; then
+    source /usr/share/fzf/key-bindings.zsh
+fi
+if [ -f /usr/share/fzf/completion.zsh ]; then
+    source /usr/share/fzf/completion.zsh
+fi
+
+# opencode - AI coding assistant
+for _opencode_dir in "$HOME/.opencode/bin" "$HOME/.local/bin" "/usr/local/bin"; do
+    if [ -x "$_opencode_dir/opencode" ]; then
+        export PATH="$_opencode_dir:$PATH"
+        break
+    fi
+done
+unset _opencode_dir
+
+# Secrets are loaded lazily by command wrappers, not during shell startup.
+# OpenCode uses Proton Pass through opencode-with-pass.
+if command -v opencode-with-pass >/dev/null 2>&1; then
+  opencode() { command opencode-with-pass "$@"; }
+fi

@@ -2,7 +2,8 @@
 # One generic name per line. setup.sh maps names that differ per distro
 # (see pkg_name in setup.sh). Lines starting with # are ignored.
 
-# editors / terminal
+# shell / editors / terminal
+zsh
 tmux
 vim
 nano

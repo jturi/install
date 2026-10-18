@@ -31,7 +31,8 @@ cd ~/repos/install
 ```
 
 Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`,
-`--ssh-server`, `--ssh-key`, `--no-ssh-key`, `-h/--help`.
+`--ssh-server`, `--ssh-key`, `--no-ssh-key`, `--zsh-default`,
+`--no-zsh-default`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
 only. It runs as root without `sudo` when you are root.
@@ -69,7 +70,7 @@ package manager:
 ## What it installs
 
 - Packages: `packages/base.txt`, grouped:
-  - editors/terminal: tmux, vim, nano, less, bash-completion, man-db
+  - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, man-db
   - system: sudo, htop, procps, lsof, which, file, diffutils
   - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
   - files: tree, tar, gzip, zip, unzip, jq
@@ -82,11 +83,25 @@ package manager:
 - Configs (`configs/` → `$HOME`):
   - `tmux.conf` → `~/.tmux.conf` (copy of `dotfiles/dot_tmux.conf`, prefix `Ctrl+a`)
   - `nanorc` → `~/.nanorc`
+  - `zshrc` → `~/.zshrc` (copy of `dotfiles/dot_zshrc`; the `~/.bash_*` alias
+    files and OpenCode lines it references are skipped when absent)
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
-An existing config that differs is moved to `<file>.bak.<timestamp>` first.
-Reruns are safe: identical files are left alone.
+Before a file changes, `setup.sh` copies it to `<file>.bak.$(date +%Y%m%d_%H%M%S)`,
+for example `~/.zshrc.bak.20261018_191502`. This covers every config in
+`configs/` and the `~/.zprofile` line on macOS. A file that is already
+identical to the repo version is left alone, so reruns make no new backups.
+
+## Login shell
+
+At the end, `setup.sh` asks `Make zsh your login shell (now /bin/bash)? [y/N]`.
+On Linux it runs `usermod -s <zsh> <user>` (via sudo); on macOS `chsh -s`.
+Log out and back in to use it.
+
+- `--zsh-default`: change it without asking.
+- `--no-zsh-default`: skip the question.
+- `--yes`, `--dry-run`, or no terminal: never changes the shell.
 
 ## SSH key
 

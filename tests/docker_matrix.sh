@@ -23,9 +23,12 @@ for image in "${IMAGES[@]}"; do
   # shellcheck disable=SC2016  # expands inside the container
   if "${ENGINE}" run --rm -v "${ROOT}:/src:ro" "${image}" bash -c '
       set -e
-      /src/setup.sh --yes --ssh-server --ssh-key </dev/null
+      /src/setup.sh --yes --ssh-server --ssh-key --zsh-default </dev/null
+      getent passwd root | grep -q "zsh$" || { echo "login shell not zsh"; exit 1; }
+      cmp /src/configs/zshrc ~/.zshrc
+      zsh -i -c exit </dev/null
       test -f ~/.ssh/id_ed25519.pub
-      for bin in tmux vim nano htop git curl ssh sshd dig ip ping less sudo which file lsof zip; do command -v "$bin" >/dev/null || { echo "missing $bin"; exit 1; }; done
+      for bin in zsh tmux vim nano htop git curl ssh sshd dig ip ping less sudo which file lsof zip; do command -v "$bin" >/dev/null || { echo "missing $bin"; exit 1; }; done
       cmp /src/configs/tmux.conf ~/.tmux.conf
       cmp /src/configs/nanorc ~/.nanorc
       test -f ~/.tmux/plugins/tpm/tpm
