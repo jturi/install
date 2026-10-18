@@ -1,13 +1,30 @@
 # install
 
-Bootstrap a new Linux machine. One script installs the basic packages and
+Bootstrap a new Linux or macOS machine. One script installs the basic packages and
 copies the base configs. Configs come from the
 [dotfiles](../dotfiles) repo.
 
 ## Quick start
 
+One line, no git needed (downloads the repo to `~/install` and runs it):
+
 ```sh
-git clone <this-repo> ~/repos/install
+mkdir -p ~/install && curl -fsSL https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+```
+
+No curl (minimal Debian/Ubuntu)? Use wget:
+
+```sh
+mkdir -p ~/install && wget -qO- https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+```
+
+Add options at the end, for example `... && ~/install/setup.sh --yes`.
+The curl line also works on macOS (curl and tar are built in).
+
+Or clone it:
+
+```sh
+git clone https://github.com/jturi/install.git ~/repos/install
 cd ~/repos/install
 ./setup.sh            # asks once, then installs packages + configs
 ./setup.sh --dry-run  # show what would run, change nothing
@@ -30,6 +47,24 @@ package manager:
 | debian | Debian, Ubuntu, Mint, Pop!_OS | `apt-get install` |
 | fedora | Fedora and Fedora-likes | `dnf install` |
 | rhel   | RHEL, Rocky, AlmaLinux, CentOS Stream | `dnf`/`yum` + EPEL (for `htop`) |
+| macos  | macOS (Intel and Apple Silicon) | Homebrew (`brew install`) |
+
+## macOS
+
+- Run as your normal user, not root (Homebrew refuses root).
+- If `brew` is missing, `setup.sh` runs the official installer:
+  `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`.
+  It asks for your password and installs the Xcode Command Line Tools.
+  With `--yes` it sets `NONINTERACTIVE=1`.
+- After the install it adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`.
+- macOS already has less, curl, ssh, lsof, file, tar, zip and the other base
+  tools, so brew installs only: tmux, vim, nano, bash-completion@2, htop, git,
+  wget, rsync, tree, jq.
+- `~/.nanorc` points at Homebrew's nano syntax files (`<prefix>/share/nano`).
+- `--ssh-server` turns on Remote Login (`systemsetup -setremotelogin on`).
+  Newer macOS can block this without Full Disk Access; then use
+  System Settings > General > Sharing > Remote Login.
+- `setup.sh` runs on the bash 3.2 that ships with macOS.
 
 ## What it installs
 
@@ -76,7 +111,8 @@ exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
 ```sh
 make lint         # shellcheck
 make test         # unit tests: distro detection, name mapping, config copy
-make test-docker  # real run in archlinux, ubuntu:24.04, debian:12, fedora,
+make test-bash32  # same tests + macOS dry-run under bash 3.2 (macOS system bash)
+make test-docker  # real Linux run in archlinux, ubuntu:24.04, debian:12, fedora,
                   # rockylinux 9, almalinux 9 containers
 ```
 

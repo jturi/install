@@ -23,7 +23,7 @@ check() {
 
 family_of() {
   printf '%s\n' "$@" >"${WORK}/os-release"
-  OS_RELEASE_FILE="${WORK}/os-release" detect_family 2>/dev/null
+  UNAME_S=Linux OS_RELEASE_FILE="${WORK}/os-release" detect_family 2>/dev/null
 }
 
 check arch "arch" "$(family_of ID=arch)"
@@ -39,6 +39,7 @@ check rocky "rhel" "$(family_of ID=rocky 'ID_LIKE="rhel centos fedora"')"
 check alma "rhel" "$(family_of ID=almalinux 'ID_LIKE="rhel centos fedora"')"
 check centos "rhel" "$(family_of ID=centos 'ID_LIKE="rhel fedora"')"
 check unsupported "" "$(family_of ID=gentoo)"
+check macos "macos" "$(UNAME_S=Darwin OS_RELEASE_FILE=/nonexistent detect_family)"
 
 printf '%s\n' ID=rocky VERSION_ID=9.4 >"${WORK}/os-release"
 check major-version "9" "$(OS_RELEASE_FILE="${WORK}/os-release" os_major_version)"
@@ -54,6 +55,9 @@ check sshd-arch "openssh" "$(pkg_name arch openssh-server)"
 check sshd-rhel "openssh-server" "$(pkg_name rhel openssh-server)"
 check dns-fedora "bind-utils" "$(pkg_name fedora dnsutils)"
 check ping-debian "iputils-ping" "$(pkg_name debian iputils)"
+check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
+check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
+check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
 
 printf '%s\n' '# comment' '' 'tmux' 'vim  # editor' >"${WORK}/pkgs.txt"
 check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages fedora | xargs)"
@@ -67,11 +71,19 @@ TARGET_HOME="${home}" install_configs >/dev/null
 check tmux-conf-copied "same" "$(cmp -s "${ROOT}/configs/tmux.conf" "${home}/.tmux.conf" && echo same)"
 check nanorc-copied "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" && echo same)"
 TARGET_HOME="${home}" install_configs >/dev/null
-check idempotent-no-backup "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l)"
+check idempotent-no-backup "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
 echo "old" >"${home}/.nanorc"
 TARGET_HOME="${home}" install_configs >/dev/null
-check backup-created "1" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | wc -l)"
+check backup-created "1" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | wc -l | tr -d ' ')"
 check backup-content "old" "$(cat "${home}"/.nanorc.bak.*)"
+
+# macOS: nanorc points at the Homebrew prefix.
+home_mac="${WORK}/home_mac"
+mkdir -p "${home_mac}/.tmux/plugins/tpm"
+TARGET_HOME="${home_mac}" install_configs macos >/dev/null
+check macos-nanorc "include \"$(brew_prefix)/share/nano/*.nanorc\"" "$(grep '^include' "${home_mac}/.nanorc")"
+TARGET_HOME="${home_mac}" install_configs macos >/dev/null
+check macos-nanorc-idempotent "0" "$(find "${home_mac}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
 
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
@@ -87,7 +99,7 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   mkdir -p "${home2}"
   TARGET_HOME="${home2}" SSH_KEY_MODE=create setup_ssh_key </dev/null >/dev/null
   check key-created "yes" "$([[ -f "${home2}/.ssh/id_ed25519" && -f "${home2}/.ssh/id_ed25519.pub" ]] && echo yes)"
-  check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh")"
+  check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh" 2>/dev/null || stat -f %Lp "${home2}/.ssh")"
   check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=ask setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
 fi
 
