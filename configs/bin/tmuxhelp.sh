@@ -33,10 +33,11 @@ if [[ ! -f "$CONF" ]]; then
 fi
 
 # Strip the leading "# " comment markers and decoration-only lines
-# (====, ----, #### runs) so the quick-ref reads cleanly; squeeze blanks.
+# (====, ----, #### runs) so the quick-ref reads cleanly; squeeze blanks
+# with awk (POSIX) instead of cat -s (missing on BusyBox/macOS edge cases).
 clean() {
   sed -e 's/^#[[:space:]]\{0,1\}//' \
-      -e '/^[=#-]\{3,\}$/d' | cat -s
+      -e '/^[=#-]\{3,\}$/d' | awk 'NF { blank=0 } !NF { if (blank++) next } 1'
 }
 
 if [[ $show_all -eq 1 ]]; then

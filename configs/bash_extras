@@ -50,6 +50,21 @@ ltt() {
 }
 
 # --- tmux ---
+
+alias ta='tmux attach || tmux new'
+alias tl='tmux ls'
+
+# tm [session]: attach-or-create (default tmux1); inside tmux, switch client instead of nesting.
+tm() {
+  command -v tmux >/dev/null 2>&1 || { echo "tm: tmux is not installed" >&2; return 127; }
+  local s="${1:-tmux1}"
+  if [[ -n ${TMUX:-} ]]; then
+    TERM=xterm-256color tmux new-session -Ad -s "$s" && tmux switch-client -t "$s"
+  else
+    TERM=xterm-256color tmux new-session -A -s "$s"
+  fi
+}
+
 # ta/tl + tm() live in ~/.bash_aliases; tn/tmux1/tmux2 are extra shortcuts.
 alias tn='tmux new -s'
 alias tkill='tmux kill-session -t'
@@ -96,6 +111,12 @@ alias gl='git log --oneline -20'
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
+
+# --- git extras ---
+alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
+alias groot='git rev-parse --show-toplevel'
+alias gstash='git stash'
+alias gpop='git stash pop'
 
 # --- more keepers (macOS + Linux) ---
 
@@ -174,9 +195,3 @@ alg() {
   alias | grep -i --color=always -- "$*" || true
   declare -F | awk '{print $NF}' | grep -i --color=always -- "$*" || true
 }
-
-# --- git extras ---
-alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
-alias groot='git rev-parse --show-toplevel'
-alias gstash='git stash'
-alias gpop='git stash pop'
