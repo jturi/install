@@ -56,7 +56,7 @@ zsh-default: ## Make zsh the login shell
 
 lint: ## shellcheck all scripts
 	shellcheck -x $(SHELL_FILES)
-	shellcheck -s bash configs/bash_aliases
+	shellcheck -s bash configs/bash_aliases configs/bash_extras
 
 test: ## Unit tests (no root, no containers)
 	bash tests/test_setup.sh

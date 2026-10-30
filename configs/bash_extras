@@ -1,0 +1,72 @@
+# ~/.bash_extras (from the install repo) — most-used simple aliases.
+# Sourced after ~/.bash_aliases / ~/.bash_aliases2 by bash and zsh.
+# Only plain aliases + tiny portable helpers (no fzf, eza, python deps).
+# Built from this machine's ~/.bash_history top commands:
+#   m, cd, make, sudo, ls, gst, gpush, dot->rep, ll, gl, gpull, lt,
+#   gchm, tmux, dow, gsync, gd, ltt, showdisks/serverclean skipped (need scripts).
+
+# --- navigation (history: cd, dow, rep, cd1) ---
+alias dow='cd ~/Downloads'
+alias rep='mkdir -p ~/repos && cd ~/repos'
+alias cd1='cd ..'
+alias cd2='cd ../..'
+alias cd3='cd ../../..'
+
+# mkcd <dir>: mkdir -p + cd (history: mkdircd, mkdir-p).
+mkcd() {
+  [ $# -eq 1 ] || { echo "usage: mkcd <dir>" >&2; return 1; }
+  mkdir -p -- "$1" && cd -- "$1" || return
+}
+
+# lt [count]: newest entries in $PWD (history top: lt 4x, ltt 3x).
+# Portable ls fallback (no eza dependency).
+lt() {
+  local n="${1:-10}"
+  case "$n" in
+    ''|*[!0-9]*) echo "usage: lt [count]" >&2; return 1 ;;
+  esac
+  # shellcheck disable=SC2012 # ls output is intentional here (newest-first view)
+  ls -lacth -F --color=auto | head -n "$((n + 1))"
+}
+
+# --- misc (history: c via clear, h) ---
+alias c='clear'
+alias h='history'
+
+# --- tmux (history: m 34x, tmux, tmux list-sessions) ---
+# ta/tl + tm() live in ~/.bash_aliases; these are extra shortcuts.
+alias tls='tmux ls'
+alias tn='tmux new -s'
+alias tkill='tmux kill-session -t'
+alias tmux1='tmux new-session -A -s tmux1'
+alias tmux2='tmux new-session -A -s tmux2'
+# m: shortest attach-or-create (tm [session], default tmux1).
+alias m='tm'
+
+# --- git status/diff (history: gst 9x, gd) ---
+alias gst='git status'
+alias gss='git status --short'
+alias gd='git diff'
+alias gds='git diff --staged'
+alias gdry='git clean -ndf'
+
+# --- git add/commit (history staple) ---
+alias ga='git add'
+alias gaa='git add --all'
+alias gc='git commit --verbose'
+alias gca='git commit --verbose -a'
+alias gfix='git commit --amend'
+
+# --- git sync (history: gpush 9x, gpull 6x, gsync 2x, gchm 4x) ---
+alias gpush='git push'
+alias gpull='git pull --ff-only'
+alias gsync='git pull --ff-only && git push'
+alias gchm='git checkout main'
+alias gco='git checkout'
+alias gb='git branch'
+
+# --- git log/remote (history: gl 7x) ---
+alias gl='git log --oneline -20'
+alias glog='git log --oneline --graph --decorate -20'
+alias gfa='git fetch --all --tags --prune'
+alias grv='git remote -v'
