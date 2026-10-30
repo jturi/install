@@ -102,7 +102,7 @@ identical to the repo version is left alone, so reruns make no new backups.
 `ta` for tmux attach, ...) and the `tm [session]` function: attach to or
 create a tmux session (default `tmux1`); inside tmux it switches to the
 session instead of nesting. `configs/bash_extras` holds the most-used
-simple aliases from this machine's `~/.bash_history` (`m`, `tls`/`tn`,
+simple aliases from this machine's `~/.bash_history` (`m`, `tn`,
 `gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`, `dow`/`rep`,
 `lt`, `mkcd`, ...): plain aliases plus tiny portable helpers only, no
 fzf/eza/python deps. Plus 20 more keepers that work on macOS + Linux

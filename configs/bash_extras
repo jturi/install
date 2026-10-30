@@ -54,8 +54,7 @@ ltt() {
 }
 
 # --- tmux (history: m 34x, tmux, tmux list-sessions) ---
-# ta/tl + tm() live in ~/.bash_aliases; these are extra shortcuts.
-alias tls='tmux ls'
+# ta/tl + tm() live in ~/.bash_aliases; tn/tmux1/tmux2 are extra shortcuts.
 alias tn='tmux new -s'
 alias tkill='tmux kill-session -t'
 alias tmux1='tmux new-session -A -s tmux1'
