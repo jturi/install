@@ -29,8 +29,7 @@ lt() {
   ls -lacth -F --color=auto | head -n "$((n + 1))"
 }
 
-# --- misc (history: c via clear, h) ---
-alias c='clear'
+# --- misc ---
 alias h='history'
 
 # --- tmux (history: m 34x, tmux, tmux list-sessions) ---
