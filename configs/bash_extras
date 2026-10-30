@@ -29,9 +29,6 @@ lt() {
   ls -lacth -F --color=auto | head -n "$((n + 1))"
 }
 
-# --- misc ---
-alias h='history'
-
 # --- tmux (history: m 34x, tmux, tmux list-sessions) ---
 # ta/tl + tm() live in ~/.bash_aliases; these are extra shortcuts.
 alias tls='tmux ls'
