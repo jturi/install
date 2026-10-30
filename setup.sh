@@ -338,11 +338,44 @@ install_configs() {
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
   install_aliases
+  # Scripts only (no PATH appends here): the loader block and repo .zshrc
+  # already export ~/.local/bin, so reruns stay idempotent.
+  install_bin_scripts
   install_tpm
 }
 
+# Install helper scripts (executables) into ~/.local/bin.
+# The tmuxhelp wrapper in bash_extras finds them via the PATH line that
+# install_aliases (and the repo .zshrc) already provide.
+install_bin_scripts() {
+  local bindir="${TARGET_HOME}/.local/bin"
+  local f base
+  for f in "${SCRIPT_DIR}"/configs/bin/*; do
+    [[ -f "${f}" ]] || continue
+    base="$(basename "${f}")"
+    run mkdir -p "${bindir}"
+    if [[ -f "${bindir}/${base}" ]] && cmp -s "${f}" "${bindir}/${base}" \
+      && [[ -x "${bindir}/${base}" ]]; then
+      ok "${bindir}/${base} (unchanged)"
+      continue
+    fi
+    backup_file "${bindir}/${base}"
+    info "Installing ${bindir}/${base}"
+    if ((DRY_RUN)); then
+      printf '   [dry-run] install %s -> %s\n' "${f}" "${bindir}/${base}"
+    else
+      cp "${f}" "${bindir}/${base}"
+      chmod +x "${bindir}/${base}"
+    fi
+    ok "${bindir}/${base}"
+  done
+}
+
 # Block that loads all alias files; added to the bash startup file.
+# shellcheck disable=SC2016 # loader is literal text, expanded in the user shell
 ALIAS_LOADER='# Load custom aliases in Zsh
+# Helper scripts installed by setup.sh (~/.local/bin).
+export PATH="$HOME/.local/bin:$PATH"
 if [ -f ~/.bash_aliases ]; then
     source ~/.bash_aliases
 fi
@@ -374,15 +407,26 @@ install_aliases() {
   [[ -f "${rc}" ]] || rc="${TARGET_HOME}/.bashrc"
   # Upgrade: an older loader has .bash_aliases2 but no .bash_extras line.
   # Append just the missing block instead of duplicating the whole loader.
-  if grep -qsF 'source ~/.bash_aliases2' "${rc}" && ! grep -qsF 'source ~/.bash_extras' "${rc}"; then
-    backup_file "${rc}"
-    info "Adding .bash_extras loader to ${rc}"
-    if ((DRY_RUN)); then
-      printf '   [dry-run] append .bash_extras loader to %s\n' "${rc}"
-    else
-      printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
+  # Also ensure ~/.local/bin is on PATH (older loaders predate bin scripts).
+  if grep -qsF 'source ~/.bash_aliases2' "${rc}"; then
+    local missing=""
+    grep -qsF 'source ~/.bash_extras' "${rc}" || missing="${missing} extras"
+    # shellcheck disable=SC2016 # literal line, matched literally with grep -F
+    grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || missing="${missing} path"
+    if [[ -n "${missing}" ]]; then
+      backup_file "${rc}"
+      info "Adding${missing} to ${rc}"
+      if ((DRY_RUN)); then
+        printf '   [dry-run] append%s to %s\n' "${missing}" "${rc}"
+      else
+        grep -qsF 'source ~/.bash_extras' "${rc}" || printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
+        # shellcheck disable=SC2016 # written literally into the rc file
+        grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || printf '\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${rc}"
+      fi
+      ok "${rc}"
+      return 0
     fi
-    ok "${rc}"
+    ok "${rc} already loads the alias files"
     return 0
   fi
   if grep -qsF 'source ~/.bash_extras' "${rc}"; then

@@ -112,6 +112,9 @@ fzf/eza/python deps. Both bash and zsh load both files (extras last, so
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
 - `~/.bash_extras` is always installed from the repo file.
+- Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
+  into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
+  The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.
 - The loader block below is appended to `~/.bash_profile` if that file
   exists, else to `~/.bashrc` (backed up first). It is not added twice;
   an older loader gains just the missing `~/.bash_extras` block on rerun.

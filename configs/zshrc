@@ -53,6 +53,9 @@ zstyle ':completion:*:kill:*' command 'ps -u $USER -o pid,%cpu,tty,cputime,cmd'
 # Central git repository location; shared alias files reference $REPOS
 export REPOS="${REPOS:-$HOME/repos}"
 
+# Helper scripts installed by setup.sh (~/.local/bin/tmuxhelp.sh, ...).
+export PATH="$HOME/.local/bin:$PATH"
+
 # Shared aliases — bash-only sections guarded internally
 for _f in ~/.bash_host ~/.bash_nav ~/.bash_git ~/.bash_kube ~/.bash_help ~/.bash_core; do
     [ -f "$_f" ] && source "$_f"

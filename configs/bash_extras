@@ -6,6 +6,7 @@
 #   gchm, tmux, dow, gsync, gd, ltt, showdisks/serverclean skipped (need scripts).
 
 # --- navigation (history: cd, dow, rep, cd1) ---
+alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
 alias cd1='cd ..'
@@ -38,6 +39,16 @@ alias tmux1='tmux new-session -A -s tmux1'
 alias tmux2='tmux new-session -A -s tmux2'
 # m: shortest attach-or-create (tm [session], default tmux1).
 alias m='tm'
+# tmuxhelp [query]: print/search the quick-ref in ~/.tmux.conf
+# (installed as ~/.local/bin/tmuxhelp.sh; PATH entry added by install,
+# absolute fallback covers shells started before that).
+tmuxhelp() {
+  if command -v tmuxhelp.sh >/dev/null 2>&1; then
+    tmuxhelp.sh "$@"
+  else
+    "$HOME/.local/bin/tmuxhelp.sh" "$@"
+  fi
+}
 
 # --- git status/diff (history: gst 9x, gd) ---
 alias gs='git status'
