@@ -101,13 +101,26 @@ identical to the repo version is left alone, so reruns make no new backups.
 `configs/bash_aliases` holds a small starter set (`ll`, `la`, `..`, `cp -i`,
 `ta` for tmux attach, ...) and the `tm [session]` function: attach to or
 create a tmux session (default `tmux1`); inside tmux it switches to the
-session instead of nesting. Both bash and zsh load it.
+session instead of nesting. `configs/bash_extras` holds extra portable
+aliases (`m`, `tn`, `gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`,
+`dow`/`rep`, `lt`/`ltt`, `mkcd`, ...): plain aliases plus tiny portable helpers
+only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
+(no 1-char names, no GNU-only flags except behind feature checks):
+`sudo2`/`again`, `psg`/`psmem`/`pscpu`/`killport`/`ports`, `dfh`/`duh`,
+`myip`/`down`/`serve`/`ping5`, `md`/`extract`, `hgrep`/`alg`,
+`gundo`/`groot`/`gstash`/`gpop`. Both bash and zsh load both files (extras last, so
+`m` can use `tm`).
 
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
+- `~/.bash_extras` is always installed from the repo file.
+- Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
+  into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
+  The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.
 - The loader block below is appended to `~/.bash_profile` if that file
-  exists, else to `~/.bashrc` (backed up first). It is not added twice.
+  exists, else to `~/.bashrc` (backed up first). It is not added twice;
+  an older loader gains just the missing `~/.bash_extras` block on rerun.
 
 ```sh
 # Load custom aliases in Zsh
@@ -117,6 +130,10 @@ fi
 
 if [ -f ~/.bash_aliases2 ]; then
     source ~/.bash_aliases2
+fi
+
+if [ -f ~/.bash_extras ]; then
+    source ~/.bash_extras
 fi
 ```
 

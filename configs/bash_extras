@@ -1,0 +1,197 @@
+# ~/.bash_extras (from the install repo) — simple cross-shell aliases.
+# Sourced after ~/.bash_aliases / ~/.bash_aliases2 by bash and zsh.
+# Only plain aliases + tiny portable helpers (no fzf, eza, python deps,
+# no 1-char names). macOS + Linux only: no GNU-only flags except behind
+# feature checks.
+
+# --- navigation ---
+alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
+alias dow='cd ~/Downloads'
+alias rep='mkdir -p ~/repos && cd ~/repos'
+alias cd1='cd ..'
+alias cd2='cd ../..'
+alias cd3='cd ../../..'
+
+# mkcd <dir>: mkdir -p + cd.
+mkcd() {
+  [ $# -eq 1 ] || { echo "usage: mkcd <dir>" >&2; return 1; }
+  mkdir -p -- "$1" && cd -- "$1" || return
+}
+
+# lt [count]: newest entries in $PWD.
+# Portable ls fallback (no eza dependency; macOS ls lacks --color).
+lt() {
+  local n="${1:-10}"
+  case "$n" in
+    ''|*[!0-9]*) echo "usage: lt [count]" >&2; return 1 ;;
+  esac
+  # shellcheck disable=SC2012 # ls output is intentional here (newest-first view)
+  if ls --color=auto -d . >/dev/null 2>&1; then
+    ls -lacth -F --color=auto | head -n "$((n + 1))"
+  else
+    ls -lacthF -G | head -n "$((n + 1))"
+  fi
+}
+
+# ltt [count]: newest files under $PWD, any depth.
+# Portable: skips .git/node_modules, prints size + path (macOS lacks -printf,
+# BSD xargs lacks -r, so a read loop feeds ls instead).
+ltt() {
+  local n="${1:-10}"
+  case "$n" in
+    ''|*[!0-9]*) echo "usage: ltt [count]" >&2; return 1 ;;
+  esac
+  find . \( -name .git -o -name node_modules -o -name __pycache__ \
+    -o -name .venv -o -name venv -o -name target \) -prune \
+    -o -type f -print0 2>/dev/null \
+    | { files=(); while IFS= read -r -d '' f; do files+=("$f"); done
+        ((${#files[@]})) && ls -lthd -- "${files[@]}"; } 2>/dev/null \
+    | head -n "$n"
+}
+
+# --- tmux ---
+
+alias ta='tmux attach || tmux new'
+alias tl='tmux ls'
+
+# tm [session]: attach-or-create (default tmux1); inside tmux, switch client instead of nesting.
+tm() {
+  command -v tmux >/dev/null 2>&1 || { echo "tm: tmux is not installed" >&2; return 127; }
+  local s="${1:-tmux1}"
+  if [[ -n ${TMUX:-} ]]; then
+    TERM=xterm-256color tmux new-session -Ad -s "$s" && tmux switch-client -t "$s"
+  else
+    TERM=xterm-256color tmux new-session -A -s "$s"
+  fi
+}
+
+# ta/tl + tm() live in ~/.bash_aliases; tn/tmux1/tmux2 are extra shortcuts.
+alias tn='tmux new -s'
+alias tkill='tmux kill-session -t'
+alias tmux1='tmux new-session -A -s tmux1'
+alias tmux2='tmux new-session -A -s tmux2'
+# m: shortest attach-or-create (tm [session], default tmux1).
+alias m='tm'
+# tmuxhelp [query]: print/search the quick-ref in ~/.tmux.conf
+# (installed as ~/.local/bin/tmuxhelp.sh; PATH entry added by install,
+# absolute fallback covers shells started before that).
+tmuxhelp() {
+  if command -v tmuxhelp.sh >/dev/null 2>&1; then
+    tmuxhelp.sh "$@"
+  else
+    "$HOME/.local/bin/tmuxhelp.sh" "$@"
+  fi
+}
+
+# --- git status/diff ---
+alias gs='git status'
+alias gst='git status'
+alias gss='git status --short'
+alias gd='git diff'
+alias gds='git diff --staged'
+alias gdry='git clean -ndf'
+
+# --- git add/commit ---
+alias ga='git add'
+alias gaa='git add --all'
+alias gc='git commit --verbose'
+alias gca='git commit --verbose -a'
+alias gfix='git commit --amend'
+
+# --- git sync ---
+alias gpush='git push'
+alias gpull='git pull --ff-only'
+alias gsync='git pull --ff-only && git push'
+alias gchm='git checkout main'
+alias gco='git checkout'
+alias gb='git branch'
+
+# --- git log/remote ---
+alias gl='git log --oneline -20'
+alias glog='git log --oneline --graph --decorate -20'
+alias gfa='git fetch --all --tags --prune'
+alias grv='git remote -v'
+
+# --- git extras ---
+alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
+alias groot='git rev-parse --show-toplevel'
+alias gstash='git stash'
+alias gpop='git stash pop'
+
+# --- more keepers (macOS + Linux) ---
+
+# --- sudo/processes  ---
+alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
+# again: rerun last command as root (fc is POSIX; works in bash+zsh,
+# unlike !! inside aliases which only bash expands).
+again() { sudo "$(fc -ln -1)"; }
+# psg <pat>: find processes (pgrep ships on both via procps / macOS base).
+psg() {
+  [ $# -ge 1 ] || { echo "usage: psg <pattern>" >&2; return 1; }
+  pgrep -af -- "$*"
+}
+# Top RAM/CPU consumers via POSIX sort -n -k (dotfiles use GNU-only --sort).
+alias psmem='ps aux | sort -nrk 4 | head -n 15'
+alias pscpu='ps aux | sort -nrk 3 | head -n 15'
+# killport <port>: kill whatever listens there (`lsof -ti` works on both;
+# `ss -tlnp` is Linux-only).
+killport() {
+  [ $# -eq 1 ] || { echo "usage: killport <port>" >&2; return 1; }
+  # shellcheck disable=SC2046 # intentional word-splitting of PID list
+  kill $(lsof -ti "tcp:$1") || return
+}
+# ports: listening TCP sockets (`lsof` ships on both via setup/brew).
+alias ports='lsof -i -P -n | grep LISTEN'
+
+# df -h: identical flags on both. duh: plain `du -sh` per entry
+# (GNU `du --max-depth` and `sort -h` do not exist on macOS).
+alias dfh='df -h'
+duh() {
+  if [ -n "${ZSH_VERSION:-}" ]; then setopt localoptions null_glob; else shopt -s nullglob; fi
+  du -sh -- * .[!.]* 2>/dev/null | sort -n
+  if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
+}
+
+# --- network/download ---
+# myip: public IP (curl ships on both; matches dotfiles myip).
+alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
+# down <url> [file]: curl, wget fallback (same shape as dotfiles down()).
+down() {
+  if [ $# -eq 0 ]; then echo "Usage: down <url> [filename]" >&2; return 1; fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --progress-bar -o "${2:-$(basename "$1")}" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --show-progress "$1"
+  else
+    echo "down: neither curl nor wget found" >&2; return 1
+  fi
+}
+# serve [port]: loopback-only static server from stdlib python3.
+serve() { python3 -m http.server "${1:-8000}" --bind 127.0.0.1; }
+alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
+
+# --- files/archives ---
+alias md='mkdir -p'
+# extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
+extract() {
+  [ $# -eq 1 ] || { echo "usage: extract <archive>" >&2; return 1; }
+  case "$1" in
+    *.tar.gz|*.tgz) tar xzf "$1" ;;
+    *.tar.bz2|*.tbz2) tar xjf "$1" ;;
+    *.tar.xz|*.txz) tar xJf "$1" ;;
+    *.tar) tar xf "$1" ;;
+    *.zip) unzip -q "$1" ;;
+    *) echo "extract: unknown format: $1" >&2; return 1 ;;
+  esac
+}
+
+# --- search ---
+# hgrep <pat>: grep shell history.
+hgrep() { history | grep -i -- "$@"; }
+# alg <pat>: grep loaded aliases (colored) + matching function names.
+# `alias` prints name=value lines, so `alg psmem` shows its line.
+alg() {
+  [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
+  alias | grep -i --color=always -- "$*" || true
+  declare -F | awk '{print $NF}' | grep -i --color=always -- "$*" || true
+}
