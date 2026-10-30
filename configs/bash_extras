@@ -101,7 +101,7 @@ alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
 
-# --- 20 more keepers (no 1-char names; history-mined, macOS + Linux) ---
+# --- 18 more keepers (no 1-char names; history-mined, macOS + Linux) ---
 
 # --- sudo/processes (history: sudo 28x, btop/htop, pkill) ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
@@ -168,8 +168,6 @@ extract() {
     *) echo "extract: unknown format: $1" >&2; return 1 ;;
   esac
 }
-alias vedit='vim' # both installed by setup.sh / brew
-alias nedit='nano'
 
 # --- search/history ---
 # hgrep <pat>: grep shell history (avoids re-adding banned `h` alias).
