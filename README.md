@@ -101,11 +101,10 @@ identical to the repo version is left alone, so reruns make no new backups.
 `configs/bash_aliases` holds a small starter set (`ll`, `la`, `..`, `cp -i`,
 `ta` for tmux attach, ...) and the `tm [session]` function: attach to or
 create a tmux session (default `tmux1`); inside tmux it switches to the
-session instead of nesting. `configs/bash_extras` holds the most-used
-simple aliases from this machine's `~/.bash_history` (`m`, `tn`,
-`gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`, `dow`/`rep`,
-`lt`, `mkcd`, ...): plain aliases plus tiny portable helpers only, no
-fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
+session instead of nesting. `configs/bash_extras` holds extra portable
+aliases (`m`, `tn`, `gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`,
+`dow`/`rep`, `lt`/`ltt`, `mkcd`, ...): plain aliases plus tiny portable helpers
+only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 (no 1-char names, no GNU-only flags except behind feature checks):
 `sudo2`/`again`, `psg`/`psmem`/`pscpu`/`killport`/`ports`, `dfh`/`duh`,
 `myip`/`down`/`serve`/`ping5`, `md`/`extract`, `hgrep`,
