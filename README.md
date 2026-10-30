@@ -105,7 +105,11 @@ session instead of nesting. `configs/bash_extras` holds the most-used
 simple aliases from this machine's `~/.bash_history` (`m`, `tls`/`tn`,
 `gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`, `dow`/`rep`,
 `lt`, `mkcd`, ...): plain aliases plus tiny portable helpers only, no
-fzf/eza/python deps. Both bash and zsh load both files (extras last, so
+fzf/eza/python deps. Plus 20 more keepers that work on macOS + Linux
+(no 1-char names, no GNU-only flags except behind feature checks):
+`sudo2`/`again`, `psg`/`psmem`/`pscpu`/`killport`/`ports`, `dfh`/`duh`,
+`myip`/`down`/`serve`/`ping5`, `md`/`extract`/`vedit`/`nedit`, `hgrep`,
+`gundo`/`groot`/`gstash`/`gpop`. Both bash and zsh load both files (extras last, so
 `m` can use `tm`).
 
 - No `~/.bash_aliases` yet: it is created from the repo file.

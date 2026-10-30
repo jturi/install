@@ -139,7 +139,7 @@ check upgrade-idempotent "1" "$(grep -c 'source ~/.bash_extras' "${ah3}/.bashrc"
 
 # Both alias files parse and key aliases resolve; mkcd/lt helpers work.
 check extras-parse "ok" "$(bash -n "${ROOT}/configs/bash_extras" && bash -n "${ROOT}/configs/bash_aliases" && echo ok)"
-check extras-aliases-resolve "9" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_aliases; source '"${ROOT}"'/configs/bash_extras; for a in m gs gst gpush gpull gl gchm tls dow; do alias "$a" >/dev/null 2>&1 || exit 1; done; echo 9')"
+check extras-aliases-resolve "29" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_aliases; source '"${ROOT}"'/configs/bash_extras; for a in m gs gst gpush gpull gl gchm tls dow sudo2 psmem pscpu ports dfh myip ping5 md vedit nedit gundo groot gstash gpop; do alias "$a" >/dev/null 2>&1 || exit 1; done; for f in again psg killport duh down serve extract hgrep ltt lt mkcd tmuxhelp; do type -t "$f" | grep -q function || exit 1; done; echo 29')"
 check extras-mkcd "yes" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); mkcd "$d/sub" >/dev/null && [[ "$PWD" == "$d/sub" ]] && echo yes; rm -rf "$d"')"
 check extras-lt "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a b; lt 2 >/dev/null | grep -c "^total"; rm -rf "$d"')"
 
@@ -204,3 +204,13 @@ if ((FAILS)); then
   exit 1
 fi
 echo "all tests passed"
+
+# keepers-20 smoke: extract round-trip, duh, hgrep, down-usage.
+keeper_home="${WORK}/keeper_home"
+mkdir -p "${keeper_home}"
+( cd "${keeper_home}" && mkdir -p src && echo hi > src/f.txt && tar czf a.tar.gz src >/dev/null && rm -rf src && bash -c 'source '"${ROOT}"'/configs/bash_extras; extract a.tar.gz' && [ -f src/f.txt ] && echo keep-ok ) >/dev/null 2>&1
+check keepers-extract "keep-ok" "$(cd "${keeper_home}" && rm -rf src && bash -c 'source '"${ROOT}"'/configs/bash_extras; extract a.tar.gz >/dev/null 2>&1 && [ -f src/f.txt ] && echo keep-ok')"
+check keepers-duh "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a; duh >/dev/null 2>&1; echo $?; rm -rf "$d"')"
+check keepers-hgrep "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; type -t hgrep | grep -q function && echo 0')"
+check keepers-down-usage "1" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; down >/dev/null 2>&1; echo $?')"
+check keepers-groot "/home/server/data/repos/install" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_extras; eval "cd '"${ROOT}"' && groot"')"

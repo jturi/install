@@ -3,7 +3,10 @@
 # Only plain aliases + tiny portable helpers (no fzf, eza, python deps).
 # Built from this machine's ~/.bash_history top commands:
 #   m, cd, make, sudo, ls, gst, gpush, dot->rep, ll, gl, gpull, lt,
-#   gchm, tmux, dow, gsync, gd, ltt, showdisks/serverclean skipped (need scripts).
+#   gchm, tmux, dow, gsync, gd, ltt, showdisks/serverclean skipped (need scripts),
+#   plus: oc->o, clay, refa, dot, cf, btop, oy, gl summary via gs,
+#   snapper/paccache, pkill/killport, ping, htop, cat, nano, dust/df.
+# macOS + Linux only: no GNU-only flags except behind feature checks.
 
 # --- navigation (history: cd, dow, rep, cd1) ---
 alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
@@ -20,14 +23,34 @@ mkcd() {
 }
 
 # lt [count]: newest entries in $PWD (history top: lt 4x, ltt 3x).
-# Portable ls fallback (no eza dependency).
+# Portable ls fallback (no eza dependency; macOS ls lacks --color).
 lt() {
   local n="${1:-10}"
   case "$n" in
     ''|*[!0-9]*) echo "usage: lt [count]" >&2; return 1 ;;
   esac
   # shellcheck disable=SC2012 # ls output is intentional here (newest-first view)
-  ls -lacth -F --color=auto | head -n "$((n + 1))"
+  if ls --color=auto -d . >/dev/null 2>&1; then
+    ls -lacth -F --color=auto | head -n "$((n + 1))"
+  else
+    ls -lacthF -G | head -n "$((n + 1))"
+  fi
+}
+
+# ltt [count]: newest files under $PWD, any depth (history: ltt 3x).
+# Portable: skips .git/node_modules, prints size + path (macOS lacks -printf,
+# BSD xargs lacks -r, so a read loop feeds ls instead).
+ltt() {
+  local n="${1:-10}"
+  case "$n" in
+    ''|*[!0-9]*) echo "usage: ltt [count]" >&2; return 1 ;;
+  esac
+  find . \( -name .git -o -name node_modules -o -name __pycache__ \
+    -o -name .venv -o -name venv -o -name target \) -prune \
+    -o -type f -print0 2>/dev/null \
+    | { files=(); while IFS= read -r -d '' f; do files+=("$f"); done
+        ((${#files[@]})) && ls -lthd -- "${files[@]}"; } 2>/dev/null \
+    | head -n "$n"
 }
 
 # --- tmux (history: m 34x, tmux, tmux list-sessions) ---
@@ -78,3 +101,83 @@ alias gl='git log --oneline -20'
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
+
+# --- 20 more keepers (no 1-char names; history-mined, macOS + Linux) ---
+
+# --- sudo/processes (history: sudo 28x, btop/htop, pkill) ---
+alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
+# again: rerun last command as root (fc is POSIX; works in bash+zsh,
+# unlike !! inside aliases which only bash expands).
+again() { sudo "$(fc -ln -1)"; }
+# psg <pat>: find processes (pgrep ships on both via procps / macOS base).
+psg() {
+  [ $# -ge 1 ] || { echo "usage: psg <pattern>" >&2; return 1; }
+  pgrep -af -- "$*"
+}
+# Top RAM/CPU consumers via POSIX sort -n -k (dotfiles use GNU-only --sort).
+alias psmem='ps aux | sort -nrk 4 | head -n 15'
+alias pscpu='ps aux | sort -nrk 3 | head -n 15'
+# killport <port>: kill whatever listens there (`lsof -ti` works on both;
+# `ss -tlnp` is Linux-only).
+killport() {
+  [ $# -eq 1 ] || { echo "usage: killport <port>" >&2; return 1; }
+  # shellcheck disable=SC2046 # intentional word-splitting of PID list
+  kill $(lsof -ti "tcp:$1") || return
+}
+# ports: listening TCP sockets (`lsof` ships on both via setup/brew).
+alias ports='lsof -i -P -n | grep LISTEN'
+
+# --- disk (history: showdisks/serverclean/psdisk/disksize/dust) ---
+# df -h: identical flags on both. duh: plain `du -sh` per entry
+# (GNU `du --max-depth` and `sort -h` do not exist on macOS).
+alias dfh='df -h'
+duh() {
+  if [ -n "${ZSH_VERSION:-}" ]; then setopt localoptions null_glob; else shopt -s nullglob; fi
+  du -sh -- * .[!.]* 2>/dev/null | sort -n
+  if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
+}
+
+# --- network/download (history: curl, ping, serve) ---
+# myip: public IP (curl ships on both; matches dotfiles myip).
+alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
+# down <url> [file]: curl, wget fallback (same shape as dotfiles down()).
+down() {
+  if [ $# -eq 0 ]; then echo "Usage: down <url> [filename]" >&2; return 1; fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --progress-bar -o "${2:-$(basename "$1")}" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --show-progress "$1"
+  else
+    echo "down: neither curl nor wget found" >&2; return 1
+  fi
+}
+# serve [port]: loopback-only static server from stdlib python3.
+serve() { python3 -m http.server "${1:-8000}" --bind 127.0.0.1; }
+alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
+
+# --- files/archives (history: mkdir, cat, nano, tar xzf) ---
+alias md='mkdir -p' # matches dotfiles; dedups mkdir-p/mkdircd history
+# extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
+extract() {
+  [ $# -eq 1 ] || { echo "usage: extract <archive>" >&2; return 1; }
+  case "$1" in
+    *.tar.gz|*.tgz) tar xzf "$1" ;;
+    *.tar.bz2|*.tbz2) tar xjf "$1" ;;
+    *.tar.xz|*.txz) tar xJf "$1" ;;
+    *.tar) tar xf "$1" ;;
+    *.zip) unzip -q "$1" ;;
+    *) echo "extract: unknown format: $1" >&2; return 1 ;;
+  esac
+}
+alias vedit='vim' # both installed by setup.sh / brew
+alias nedit='nano'
+
+# --- search/history ---
+# hgrep <pat>: grep shell history (avoids re-adding banned `h` alias).
+hgrep() { history | grep -i -- "$@"; }
+
+# --- git extras (pure git, no fzf/python; gundo already in dotfiles) ---
+alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
+alias groot='git rev-parse --show-toplevel'
+alias gstash='git stash'
+alias gpop='git stash pop'
