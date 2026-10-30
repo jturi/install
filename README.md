@@ -107,7 +107,7 @@ aliases (`m`, `tn`, `gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`,
 only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 (no 1-char names, no GNU-only flags except behind feature checks):
 `sudo2`/`again`, `psg`/`psmem`/`pscpu`/`killport`/`ports`, `dfh`/`duh`,
-`myip`/`down`/`serve`/`ping5`, `md`/`extract`, `hgrep`,
+`myip`/`down`/`serve`/`ping5`, `md`/`extract`, `hgrep`/`alg`,
 `gundo`/`groot`/`gstash`/`gpop`. Both bash and zsh load both files (extras last, so
 `m` can use `tm`).
 
