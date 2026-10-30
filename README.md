@@ -101,13 +101,20 @@ identical to the repo version is left alone, so reruns make no new backups.
 `configs/bash_aliases` holds a small starter set (`ll`, `la`, `..`, `cp -i`,
 `ta` for tmux attach, ...) and the `tm [session]` function: attach to or
 create a tmux session (default `tmux1`); inside tmux it switches to the
-session instead of nesting. Both bash and zsh load it.
+session instead of nesting. `configs/bash_extras` holds the most-used
+simple aliases from this machine's `~/.bash_history` (`m`, `tls`/`tn`,
+`gst`/`gd`/`ga`/`gc`, `gpush`/`gpull`/`gsync`/`gchm`/`gl`, `dow`/`rep`,
+`lt`, `mkcd`, ...): plain aliases plus tiny portable helpers only, no
+fzf/eza/python deps. Both bash and zsh load both files (extras last, so
+`m` can use `tm`).
 
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
+- `~/.bash_extras` is always installed from the repo file.
 - The loader block below is appended to `~/.bash_profile` if that file
-  exists, else to `~/.bashrc` (backed up first). It is not added twice.
+  exists, else to `~/.bashrc` (backed up first). It is not added twice;
+  an older loader gains just the missing `~/.bash_extras` block on rerun.
 
 ```sh
 # Load custom aliases in Zsh
@@ -117,6 +124,10 @@ fi
 
 if [ -f ~/.bash_aliases2 ]; then
     source ~/.bash_aliases2
+fi
+
+if [ -f ~/.bash_extras ]; then
+    source ~/.bash_extras
 fi
 ```
 

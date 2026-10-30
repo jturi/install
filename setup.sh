@@ -341,7 +341,7 @@ install_configs() {
   install_tpm
 }
 
-# Block that loads both alias files; added to the bash startup file.
+# Block that loads all alias files; added to the bash startup file.
 ALIAS_LOADER='# Load custom aliases in Zsh
 if [ -f ~/.bash_aliases ]; then
     source ~/.bash_aliases
@@ -349,23 +349,43 @@ fi
 
 if [ -f ~/.bash_aliases2 ]; then
     source ~/.bash_aliases2
+fi
+
+if [ -f ~/.bash_extras ]; then
+    source ~/.bash_extras
 fi'
 
 # Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
-# the user already has their own ~/.bash_aliases. Then make bash load both.
+# the user already has their own ~/.bash_aliases. Then make bash load all
+# alias files. configs/bash_extras always installs as ~/.bash_extras.
 install_aliases() {
   local src="${SCRIPT_DIR}/configs/bash_aliases"
+  local extra_src="${SCRIPT_DIR}/configs/bash_extras"
   local dst="${TARGET_HOME}/.bash_aliases"
   if [[ -e "${dst}" ]] && ! files_equal "${src}" "${dst}"; then
     info "Keeping your ${dst}; installing repo aliases as .bash_aliases2"
     dst="${TARGET_HOME}/.bash_aliases2"
   fi
   install_file "${src}" "${dst}"
+  install_file "${extra_src}" "${TARGET_HOME}/.bash_extras"
 
   # ~/.bash_profile when it exists, else ~/.bashrc.
   local rc="${TARGET_HOME}/.bash_profile"
   [[ -f "${rc}" ]] || rc="${TARGET_HOME}/.bashrc"
-  if grep -qsF 'source ~/.bash_aliases2' "${rc}"; then
+  # Upgrade: an older loader has .bash_aliases2 but no .bash_extras line.
+  # Append just the missing block instead of duplicating the whole loader.
+  if grep -qsF 'source ~/.bash_aliases2' "${rc}" && ! grep -qsF 'source ~/.bash_extras' "${rc}"; then
+    backup_file "${rc}"
+    info "Adding .bash_extras loader to ${rc}"
+    if ((DRY_RUN)); then
+      printf '   [dry-run] append .bash_extras loader to %s\n' "${rc}"
+    else
+      printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
+    fi
+    ok "${rc}"
+    return 0
+  fi
+  if grep -qsF 'source ~/.bash_extras' "${rc}"; then
     ok "${rc} already loads the alias files"
     return 0
   fi
