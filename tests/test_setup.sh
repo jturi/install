@@ -143,6 +143,32 @@ check extras-aliases-resolve "9" "$(bash -c 'shopt -s expand_aliases; source '"$
 check extras-mkcd "yes" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); mkcd "$d/sub" >/dev/null && [[ "$PWD" == "$d/sub" ]] && echo yes; rm -rf "$d"')"
 check extras-lt "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a b; lt 2 >/dev/null | grep -c "^total"; rm -rf "$d"')"
 
+# Helper scripts: tmuxhelp.sh installs executable into ~/.local/bin with a
+# wrapper in bash_extras; idempotent. The PATH line for ~/.local/bin
+# ships inside the alias loader block (and the repo .zshrc).
+bin_home="${WORK}/bin_home"
+mkdir -p "${bin_home}/.tmux/plugins/tpm" "${bin_home}/.local/bin"
+printf 'old\n' >"${bin_home}/.local/bin/other.sh"
+chmod +x "${bin_home}/.local/bin/other.sh"
+printf '# rc\n' >"${bin_home}/.bashrc"
+# shellcheck disable=SC2016 # literal PATH line, checked literally below
+path_line='export PATH="$HOME/.local/bin:$PATH"'
+TARGET_HOME="${bin_home}" install_aliases >/dev/null
+TARGET_HOME="${bin_home}" install_bin_scripts >/dev/null
+check bin-tmuxhelp-installed "same" "$(cmp -s "${ROOT}/configs/bin/tmuxhelp.sh" "${bin_home}/.local/bin/tmuxhelp.sh" && echo same)"
+check bin-tmuxhelp-exec "yes" "$([[ -x "${bin_home}/.local/bin/tmuxhelp.sh" ]] && echo yes)"
+check bin-other-kept "old" "$(cat "${bin_home}/.local/bin/other.sh")"
+check bin-bashrc-path "1" "$(grep -cF "${path_line}" "${bin_home}/.bashrc")"
+TARGET_HOME="${bin_home}" install_aliases >/dev/null
+TARGET_HOME="${bin_home}" install_bin_scripts >/dev/null
+check bin-idempotent "1" "$(grep -cF "${path_line}" "${bin_home}/.bashrc")"
+check bin-rerun-no-backup "0" "$(find "${bin_home}/.local/bin" -maxdepth 1 -name 'tmuxhelp.sh.bak.*' | wc -l | tr -d ' ')"
+check bin-wrapper "1" "$(grep -c 'tmuxhelp()' "${ROOT}/configs/bash_extras")"
+# tmuxhelp works against a real ~/.tmux.conf (quick-ref markers).
+# (wrapper prefers tmuxhelp.sh on PATH, falls back to ~/.local/bin;
+# grep -m1 avoids SIGPIPE/head truncation tripping set -o pipefail.)
+check bin-tmuxhelp-runs "TMUX CONFIGURATION START" "$(HOME="${bin_home}" PATH="${bin_home}/.local/bin:${PATH}" bash -c 'cp '"${ROOT}"'/configs/tmux.conf "$HOME/.tmux.conf"; source '"${ROOT}"'/configs/bash_extras; tmuxhelp' 2>/dev/null | grep -m1 TMUX)"
+
 # macOS: nanorc points at the Homebrew prefix.
 home_mac="${WORK}/home_mac"
 mkdir -p "${home_mac}/.tmux/plugins/tpm"
