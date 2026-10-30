@@ -139,7 +139,7 @@ check upgrade-idempotent "1" "$(grep -c 'source ~/.bash_extras' "${ah3}/.bashrc"
 
 # Both alias files parse and key aliases resolve; mkcd/lt helpers work.
 check extras-parse "ok" "$(bash -n "${ROOT}/configs/bash_extras" && bash -n "${ROOT}/configs/bash_aliases" && echo ok)"
-check extras-aliases-resolve "8" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_aliases; source '"${ROOT}"'/configs/bash_extras; for a in m gst gpush gpull gl gchm tls dow; do alias "$a" >/dev/null 2>&1 || exit 1; done; echo 8')"
+check extras-aliases-resolve "9" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_aliases; source '"${ROOT}"'/configs/bash_extras; for a in m gs gst gpush gpull gl gchm tls dow; do alias "$a" >/dev/null 2>&1 || exit 1; done; echo 9')"
 check extras-mkcd "yes" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); mkcd "$d/sub" >/dev/null && [[ "$PWD" == "$d/sub" ]] && echo yes; rm -rf "$d"')"
 check extras-lt "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a b; lt 2 >/dev/null | grep -c "^total"; rm -rf "$d"')"
 

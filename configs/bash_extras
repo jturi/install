@@ -40,6 +40,7 @@ alias tmux2='tmux new-session -A -s tmux2'
 alias m='tm'
 
 # --- git status/diff (history: gst 9x, gd) ---
+alias gs='git status'
 alias gst='git status'
 alias gss='git status --short'
 alias gd='git diff'
