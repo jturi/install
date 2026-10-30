@@ -1,14 +1,10 @@
-# ~/.bash_extras (from the install repo) — most-used simple aliases.
+# ~/.bash_extras (from the install repo) — simple cross-shell aliases.
 # Sourced after ~/.bash_aliases / ~/.bash_aliases2 by bash and zsh.
-# Only plain aliases + tiny portable helpers (no fzf, eza, python deps).
-# Built from this machine's ~/.bash_history top commands:
-#   m, cd, make, sudo, ls, gst, gpush, dot->rep, ll, gl, gpull, lt,
-#   gchm, tmux, dow, gsync, gd, ltt, showdisks/serverclean skipped (need scripts),
-#   plus: oc->o, clay, refa, dot, cf, btop, oy, gl summary via gs,
-#   snapper/paccache, pkill/killport, ping, htop, cat, nano, dust/df.
-# macOS + Linux only: no GNU-only flags except behind feature checks.
+# Only plain aliases + tiny portable helpers (no fzf, eza, python deps,
+# no 1-char names). macOS + Linux only: no GNU-only flags except behind
+# feature checks.
 
-# --- navigation (history: cd, dow, rep, cd1) ---
+# --- navigation ---
 alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
@@ -16,13 +12,13 @@ alias cd1='cd ..'
 alias cd2='cd ../..'
 alias cd3='cd ../../..'
 
-# mkcd <dir>: mkdir -p + cd (history: mkdircd, mkdir-p).
+# mkcd <dir>: mkdir -p + cd.
 mkcd() {
   [ $# -eq 1 ] || { echo "usage: mkcd <dir>" >&2; return 1; }
   mkdir -p -- "$1" && cd -- "$1" || return
 }
 
-# lt [count]: newest entries in $PWD (history top: lt 4x, ltt 3x).
+# lt [count]: newest entries in $PWD.
 # Portable ls fallback (no eza dependency; macOS ls lacks --color).
 lt() {
   local n="${1:-10}"
@@ -37,7 +33,7 @@ lt() {
   fi
 }
 
-# ltt [count]: newest files under $PWD, any depth (history: ltt 3x).
+# ltt [count]: newest files under $PWD, any depth.
 # Portable: skips .git/node_modules, prints size + path (macOS lacks -printf,
 # BSD xargs lacks -r, so a read loop feeds ls instead).
 ltt() {
@@ -53,7 +49,7 @@ ltt() {
     | head -n "$n"
 }
 
-# --- tmux (history: m 34x, tmux, tmux list-sessions) ---
+# --- tmux ---
 # ta/tl + tm() live in ~/.bash_aliases; tn/tmux1/tmux2 are extra shortcuts.
 alias tn='tmux new -s'
 alias tkill='tmux kill-session -t'
@@ -72,7 +68,7 @@ tmuxhelp() {
   fi
 }
 
-# --- git status/diff (history: gst 9x, gd) ---
+# --- git status/diff ---
 alias gs='git status'
 alias gst='git status'
 alias gss='git status --short'
@@ -80,14 +76,14 @@ alias gd='git diff'
 alias gds='git diff --staged'
 alias gdry='git clean -ndf'
 
-# --- git add/commit (history staple) ---
+# --- git add/commit ---
 alias ga='git add'
 alias gaa='git add --all'
 alias gc='git commit --verbose'
 alias gca='git commit --verbose -a'
 alias gfix='git commit --amend'
 
-# --- git sync (history: gpush 9x, gpull 6x, gsync 2x, gchm 4x) ---
+# --- git sync ---
 alias gpush='git push'
 alias gpull='git pull --ff-only'
 alias gsync='git pull --ff-only && git push'
@@ -95,15 +91,15 @@ alias gchm='git checkout main'
 alias gco='git checkout'
 alias gb='git branch'
 
-# --- git log/remote (history: gl 7x) ---
+# --- git log/remote ---
 alias gl='git log --oneline -20'
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
 
-# --- 18 more keepers (no 1-char names; history-mined, macOS + Linux) ---
+# --- more keepers (macOS + Linux) ---
 
-# --- sudo/processes (history: sudo 28x, btop/htop, pkill) ---
+# --- sudo/processes  ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
 # again: rerun last command as root (fc is POSIX; works in bash+zsh,
 # unlike !! inside aliases which only bash expands).
@@ -126,7 +122,6 @@ killport() {
 # ports: listening TCP sockets (`lsof` ships on both via setup/brew).
 alias ports='lsof -i -P -n | grep LISTEN'
 
-# --- disk (history: showdisks/serverclean/psdisk/disksize/dust) ---
 # df -h: identical flags on both. duh: plain `du -sh` per entry
 # (GNU `du --max-depth` and `sort -h` do not exist on macOS).
 alias dfh='df -h'
@@ -136,7 +131,7 @@ duh() {
   if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
 }
 
-# --- network/download (history: curl, ping, serve) ---
+# --- network/download ---
 # myip: public IP (curl ships on both; matches dotfiles myip).
 alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
 # down <url> [file]: curl, wget fallback (same shape as dotfiles down()).
@@ -154,8 +149,8 @@ down() {
 serve() { python3 -m http.server "${1:-8000}" --bind 127.0.0.1; }
 alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
 
-# --- files/archives (history: mkdir, cat, nano, tar xzf) ---
-alias md='mkdir -p' # matches dotfiles; dedups mkdir-p/mkdircd history
+# --- files/archives ---
+alias md='mkdir -p'
 # extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
 extract() {
   [ $# -eq 1 ] || { echo "usage: extract <archive>" >&2; return 1; }
@@ -169,11 +164,11 @@ extract() {
   esac
 }
 
-# --- search/history ---
-# hgrep <pat>: grep shell history (avoids re-adding banned `h` alias).
+# --- search ---
+# hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
 
-# --- git extras (pure git, no fzf/python; gundo already in dotfiles) ---
+# --- git extras ---
 alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
 alias groot='git rev-parse --show-toplevel'
 alias gstash='git stash'
