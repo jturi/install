@@ -87,6 +87,9 @@ package manager:
     files and OpenCode lines it references are skipped when absent), plus a
     block at the end that loads `~/.bash_aliases` and `~/.bash_aliases2`
   - `bash_aliases` → `~/.bash_aliases`, or `~/.bash_aliases2` (see below)
+  - `bash_show_origin` → `~/.bash_show_origin`: before each command, prints
+    where its aliases and functions are defined (`ll → ls -la  ~/.bash_aliases:12`).
+    Toggle with `show_origin on|off`. Works in bash and zsh.
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
@@ -114,13 +117,14 @@ only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
-- `~/.bash_extras` is always installed from the repo file.
+- `~/.bash_extras` and `~/.bash_show_origin` are always installed from the repo files.
 - Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
   into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
   The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.
 - The loader block below is appended to `~/.bash_profile` if that file
   exists, else to `~/.bashrc` (backed up first). It is not added twice;
-  an older loader gains just the missing `~/.bash_extras` block on rerun.
+  an older loader gains just the missing blocks (`~/.bash_extras`,
+  `~/.bash_show_origin`) on rerun.
 
 ```sh
 # Load custom aliases in Zsh
@@ -134,6 +138,12 @@ fi
 
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
+fi
+
+# Show where each alias/function comes from before it runs (last, so it
+# sees everything above). Toggle with: show_origin on|off
+if [ -f ~/.bash_show_origin ]; then
+    source ~/.bash_show_origin
 fi
 ```
 
