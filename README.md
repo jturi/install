@@ -31,8 +31,8 @@ cd ~/repos/install
 ```
 
 Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`,
-`--ssh-server`, `--ssh-key`, `--no-ssh-key`, `--zsh-default`,
-`--no-zsh-default`, `-h/--help`.
+`--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-key`, `--no-ssh-key`,
+`--zsh-default`, `--no-zsh-default`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
 only. It runs as root without `sudo` when you are root.
@@ -90,6 +90,16 @@ package manager:
   - `bash_show_origin` → `~/.bash_show_origin`: before each command, prints
     where its aliases and functions are defined (`ll → ls -la  ~/.bash_aliases:12`).
     Toggle with `show_origin on|off`. Works in bash and zsh.
+  - Terminals (opt-in): after the configs `setup.sh` asks
+    `Install kitty and Ghostty plus their configs? [y/N]` (default No).
+    On `y` it installs the kitty + Ghostty packages and copies
+    `configs/kitty/<os>.conf` → `~/.config/kitty/kitty.conf` plus
+    `configs/ghostty/<os>.config` → `~/.config/ghostty/config` on Linux or
+    `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` on
+    macOS. Ghostty has no Debian/Ubuntu apt package, so there only kitty
+    installs via apt (install Ghostty from https://ghostty.org/download).
+- `--terminal`: install the kitty + Ghostty packages and configs without asking.
+- `--no-terminal`: skip the question entirely.
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
@@ -182,10 +192,11 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 
 | Target | Does |
 |--------|------|
-| `make install` | full setup, with the SSH key and zsh prompts |
-| `make install-yes` | full setup, no prompts |
+| `make install` | full setup, with the SSH key, terminal, and zsh prompts |
+| `make install-yes` | full setup, no prompts (no SSH key, no terminals, shell unchanged) |
 | `make dry-run` | show what would run, change nothing |
 | `make packages` / `make configs` | only packages / only configs |
+| `make terminals` | install kitty + Ghostty packages and configs |
 | `make ssh-key` | create an ed25519 key if none exists |
 | `make ssh-server` | install and enable the OpenSSH server |
 | `make zsh-default` | make zsh the login shell |

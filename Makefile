@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help
-.PHONY: install install-yes dry-run packages configs ssh-key ssh-server zsh-default
+.PHONY: install install-yes dry-run packages configs terminals ssh-key ssh-server zsh-default
 .PHONY: lint test test-bash32 test-docker check test-all
 .PHONY: sync-dotfiles
 
@@ -16,7 +16,7 @@ ARGS        ?=
 DOTFILES    ?= ../dotfiles
 
 # Flags that turn off every optional step; targets below re-enable one.
-ONLY := --no-packages --no-configs --no-ssh-key --no-zsh-default
+ONLY := --no-packages --no-configs --no-terminal --no-ssh-key --no-zsh-default
 
 ##@ Help
 
@@ -38,16 +38,19 @@ dry-run: ## Show what install would do, change nothing
 	./setup.sh --dry-run $(ARGS)
 
 packages: ## Install packages only
-	./setup.sh --no-configs --no-ssh-key --no-zsh-default $(ARGS)
+	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default $(ARGS)
 
 configs: ## Install configs only (tmux, nano, zsh, aliases), with backups
-	./setup.sh --no-packages --no-ssh-key --no-zsh-default $(ARGS)
+	./setup.sh --no-packages --no-terminal --no-ssh-key --no-zsh-default $(ARGS)
 
 ssh-key: ## Create an ed25519 SSH key if none exists
 	./setup.sh $(ONLY) --ssh-key $(ARGS)
 
 ssh-server: ## Install the OpenSSH server and enable sshd (macOS: Remote Login)
-	./setup.sh --no-configs --no-ssh-key --no-zsh-default --ssh-server $(ARGS)
+	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default --ssh-server $(ARGS)
+
+terminals: ## Install kitty + Ghostty packages and configs
+	./setup.sh $(ONLY) --terminal $(ARGS)
 
 zsh-default: ## Make zsh the login shell
 	./setup.sh $(ONLY) --zsh-default $(ARGS)
