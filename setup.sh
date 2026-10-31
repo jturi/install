@@ -11,8 +11,8 @@
 # Works with the bash 3.2 that ships with macOS.
 #
 # Usage: ./setup.sh [--dry-run] [--yes] [--no-packages] [--no-configs]
-#                   [--ssh-server] [--ssh-key | --no-ssh-key]
-#                   [--zsh-default | --no-zsh-default]
+#                   [--ssh-server] [--terminal | --no-terminal]
+#                   [--ssh-key | --no-ssh-key] [--zsh-default | --no-zsh-default]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +29,7 @@ DO_CONFIGS=1
 DO_SSH_SERVER=0
 SSH_KEY_MODE=ask # ask | create | skip
 ZSH_DEFAULT_MODE=ask # ask | change | skip
+TERMINAL_MODE=ask # ask | install | skip
 
 # config source (relative to configs/) -> target (relative to $TARGET_HOME)
 CONFIG_MAP=(
@@ -52,7 +53,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
@@ -66,6 +67,8 @@ Options:
       --no-ssh-key   Do not check for an SSH key
       --zsh-default  Make zsh the login shell (no prompt)
       --no-zsh-default  Keep the current login shell
+      --terminal     Install kitty + Ghostty packages and configs (no prompt)
+      --no-terminal  Skip kitty + Ghostty (no prompt)
   -h, --help         Show this help
 EOF
 }
@@ -337,6 +340,61 @@ install_terminal_configs() {
   install_file "${SCRIPT_DIR}/configs/ghostty/${os}.config" "${ghostty_dst}"
 }
 
+# Install the kitty + Ghostty terminal packages (best effort per distro).
+# Ghostty is not packaged everywhere (e.g. Debian/Ubuntu apt); there we
+# install kitty and point at the manual Ghostty install.
+install_terminal_packages() {
+  local family="$1"
+  case "${family}" in
+    arch)
+      as_root pacman -Sy --needed --noconfirm kitty ghostty || \
+        warn "kitty/Ghostty install failed (pacman)"
+      ;;
+    debian)
+      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y kitty || \
+        warn "kitty install failed (apt)"
+      warn "Ghostty has no apt package; install it from https://ghostty.org/download"
+      ;;
+    fedora)
+      as_root dnf install -y kitty ghostty || \
+        warn "kitty/Ghostty install failed (dnf)"
+      ;;
+    rhel)
+      local pm=dnf
+      command -v dnf >/dev/null 2>&1 || pm=yum
+      as_root "${pm}" install -y kitty ghostty || \
+        warn "kitty/Ghostty install failed (${pm}; Ghostty may need a manual install from https://ghostty.org/download)"
+      ;;
+    macos)
+      ensure_brew
+      run brew install --cask kitty ghostty || \
+        warn "kitty/Ghostty install failed (brew)"
+      ;;
+    *) die "no installer for family '${family}'" ;;
+  esac
+}
+
+# Offer to install the kitty + Ghostty terminals and their configs.
+# Opt-in: default is No (empty reply skips). No prompt under --terminal /
+# --no-terminal, --yes, --dry-run, or without a terminal; --yes still skips
+# (opt-in stays off) unless --terminal was given.
+setup_terminals() {
+  local family="$1"
+  [[ "${TERMINAL_MODE}" == "skip" ]] && return 0
+  if [[ "${TERMINAL_MODE}" == "ask" ]]; then
+    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
+      info "skipping kitty + Ghostty (rerun with --terminal to install)"
+      return 0
+    fi
+    local reply
+    read -r -p "Install kitty and Ghostty plus their configs? [y/N] " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || { info "skipping kitty + Ghostty"; return 0; }
+  fi
+  info "Installing kitty + Ghostty"
+  install_terminal_packages "${family}"
+  install_terminal_configs "${family}"
+}
+
 install_configs() {
   local family="${1:-}"
   info "Installing configs into ${TARGET_HOME}"
@@ -352,7 +410,6 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
-  install_terminal_configs "${family}"
   install_aliases
   # Scripts only (no PATH appends here): the loader block and repo .zshrc
   # already export ~/.local/bin, so reruns stay idempotent.
@@ -590,6 +647,8 @@ parse_args() {
       --no-ssh-key) SSH_KEY_MODE=skip ;;
       --zsh-default) ZSH_DEFAULT_MODE=change ;;
       --no-zsh-default) ZSH_DEFAULT_MODE=skip ;;
+      --terminal) TERMINAL_MODE=install ;;
+      --no-terminal) TERMINAL_MODE=skip ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -612,6 +671,7 @@ main() {
     fi
   fi
   ((DO_CONFIGS)) && install_configs "${family}"
+  setup_terminals "${family}"
   setup_ssh_key
   setup_zsh_default
   info "Done."

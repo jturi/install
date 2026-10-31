@@ -70,16 +70,15 @@ check package-list-skip-empty "tmux vim" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read
 check arch-sshd-dedup "1" "$(DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
 
 # Config install: fresh, idempotent, backup on change.
+# (Terminal configs are opt-in via setup_terminals, not install_configs.)
 home="${WORK}/home"
 mkdir -p "${home}/.tmux/plugins/tpm"
 TARGET_HOME="${home}" install_configs >/dev/null
 check tmux-conf-copied "same" "$(cmp -s "${ROOT}/configs/tmux.conf" "${home}/.tmux.conf" && echo same)"
 check zshrc-copied "same" "$(cmp -s "${ROOT}/configs/zshrc" "${home}/.zshrc" && echo same)"
 check nanorc-copied "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" && echo same)"
-check kitty-linux-copied "same" "$(cmp -s "${ROOT}/configs/kitty/linux.conf" "${home}/.config/kitty/kitty.conf" && echo same)"
-check ghostty-linux-copied "same" "$(cmp -s "${ROOT}/configs/ghostty/linux.config" "${home}/.config/ghostty/config" && echo same)"
-# The macOS Ghostty path must not be created on Linux.
-check ghostty-mac-path-absent "no" "$([[ -e "${home}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
+check kitty-not-installed "no" "$([[ -e "${home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+check ghostty-not-installed "no" "$([[ -e "${home}/.config/ghostty/config" ]] && echo yes || echo no)"
 TARGET_HOME="${home}" install_configs >/dev/null
 check idempotent-no-backup "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
 echo "old" >"${home}/.nanorc"
@@ -173,15 +172,41 @@ check bin-wrapper "1" "$(grep -c 'tmuxhelp()' "${ROOT}/configs/bash_extras")"
 # grep -m1 avoids SIGPIPE/head truncation tripping set -o pipefail.)
 check bin-tmuxhelp-runs "TMUX CONFIGURATION START" "$(HOME="${bin_home}" PATH="${bin_home}/.local/bin:${PATH}" bash -c 'cp '"${ROOT}"'/configs/tmux.conf "$HOME/.tmux.conf"; source '"${ROOT}"'/configs/bash_extras; tmuxhelp' 2>/dev/null | grep -m1 TMUX)"
 
-# macOS: nanorc points at the Homebrew prefix.
+# macOS: nanorc points at the Homebrew prefix; terminal configs stay
+# opt-in (install_terminal_configs) on both platforms.
 home_mac="${WORK}/home_mac"
 mkdir -p "${home_mac}/.tmux/plugins/tpm"
 TARGET_HOME="${home_mac}" install_configs macos >/dev/null
 check macos-nanorc "include \"$(brew_prefix)/share/nano/*.nanorc\"" "$(grep '^include' "${home_mac}/.nanorc")"
 TARGET_HOME="${home_mac}" install_configs macos >/dev/null
 check macos-nanorc-idempotent "0" "$(find "${home_mac}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+check macos-kitty-skipped "no" "$([[ -e "${home_mac}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+check macos-ghostty-skipped "no" "$([[ -e "${home_mac}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
+# Opt-in path still copies the right per-platform files.
+TARGET_HOME="${home}" install_terminal_configs linux >/dev/null
+check kitty-linux-copied "same" "$(cmp -s "${ROOT}/configs/kitty/linux.conf" "${home}/.config/kitty/kitty.conf" && echo same)"
+check ghostty-linux-copied "same" "$(cmp -s "${ROOT}/configs/ghostty/linux.config" "${home}/.config/ghostty/config" && echo same)"
+# The macOS Ghostty path must not be created on Linux.
+check ghostty-mac-path-absent "no" "$([[ -e "${home}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
+TARGET_HOME="${home_mac}" install_terminal_configs macos >/dev/null
 check macos-kitty-copied "same" "$(cmp -s "${ROOT}/configs/kitty/macos.conf" "${home_mac}/.config/kitty/kitty.conf" && echo same)"
 check macos-ghostty-copied "same" "$(cmp -s "${ROOT}/configs/ghostty/macos.config" "${home_mac}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" && echo same)"
+
+# Terminal prompt: default No (empty / n / non-terminal / --yes all skip).
+t_home="${WORK}/t_home"
+mkdir -p "${t_home}"
+printf 'n\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux >/dev/null 2>&1
+check terminal-ask-n-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+printf '\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux >/dev/null 2>&1
+check terminal-ask-empty-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+TARGET_HOME="${t_home}" setup_terminals linux </dev/null >/dev/null 2>&1
+check terminal-ask-eof-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+TARGET_HOME="${t_home}" TERMINAL_MODE=skip setup_terminals linux >/dev/null 2>&1
+check terminal-skip-flag "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux >/dev/null 2>&1
+check terminal-yes-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
+check terminal-skip-msg "skipping kitty + Ghostty" "$(printf 'n\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
+check terminal-yes-msg "skipping kitty + Ghostty" "$(TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
 
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
