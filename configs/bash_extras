@@ -99,15 +99,20 @@ alias gca='git commit --verbose -a'
 alias gfix='git commit --amend'
 
 # --- git sync ---
+# gpush / gpull: remote and upstream handled by git (push.autoSetupRemote and
+# push.default simple are set globally by `git config --global`).
 alias gpush='git push'
 alias gpull='git pull --ff-only'
 alias gsync='git pull --ff-only && git push'
 alias gchm='git checkout main'
 alias gco='git checkout'
+alias gch='git checkout'
 alias gb='git branch'
+# gbr: branches merged / unmerged into main (green MERGED, yellow UNMERGED).
+alias gbr="printf '\033[32mMERGED\033[0m\n'; git branch --merged main -vv; printf '\033[33mUNMERGED\033[0m\n'; git branch --no-merged main -vv"
 
 # --- git log/remote ---
-alias gl='git log --oneline -20'
+alias gl="git log --all --graph --decorate --color --pretty=format:'%C(yellow)%h%Creset %C(blue)%ar%Creset %C(green)%<(80,trunc)%s%Creset %C(cyan)%d%Creset'"
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
@@ -188,10 +193,14 @@ extract() {
 # --- search ---
 # hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
-# alg <pat>: grep loaded aliases (colored) + matching function names.
+# alg <pat>: grep loaded aliases + matching function names.
 # `alias` prints name=value lines, so `alg psmem` shows its line.
+# Colors only when stdout is a terminal (not piped or redirected) and
+# NO_COLOR is unset (https://no-color.org).
 alg() {
   [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
-  alias | grep -i --color=always -- "$*" || true
-  declare -F | awk '{print $NF}' | grep -i --color=always -- "$*" || true
+  local color=never
+  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
+  alias | grep -i --color="${color}" -- "$*" || true
+  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
 }
