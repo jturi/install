@@ -102,14 +102,17 @@ mkdir -p "${ah}"
 TARGET_HOME="${ah}" install_aliases >/dev/null
 check aliases-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah}/.bash_aliases" && echo same)"
 check extras-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah}/.bash_extras" && echo same)"
+check origin-created "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah}/.bash_show_origin" && echo same)"
 check aliases2-not-created "" "$(ls "${ah}/.bash_aliases2" 2>/dev/null)"
 check loader-in-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
+check loader-origin-in-bashrc "1" "$(grep -c 'source ~/.bash_show_origin' "${ah}/.bashrc")"
 check no-bashrc-backup-when-new "0" "$(find "${ah}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
 TARGET_HOME="${ah}" install_aliases >/dev/null
 check loader-not-duplicated "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
+check origin-loader-not-duplicated "1" "$(grep -c 'source ~/.bash_show_origin' "${ah}/.bashrc")"
 check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
-# Loader sources every file in order: extras last so it can use tm() from bash_aliases.
-check loader-order "aliases aliases2 extras" "$(grep -o 'source ~/\.bash_[a-z0-9]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
+# Loader sources every file in order: extras before origin (origin hooks the prompt, so it loads last).
+check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
 
 # Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
 # an existing ~/.bash_profile gets the loader (backed up), ~/.bashrc is untouched.
@@ -127,6 +130,8 @@ check loader-works "mine" "$(HOME="${ah2}" bash -c 'shopt -s expand_aliases; sou
 check extras2-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah2}/.bash_extras" && echo same)"
 check zshrc-loads-aliases "1" "$(grep -c 'source ~/.bash_aliases2' "${ROOT}/configs/zshrc")"
 check zshrc-loads-extras "1" "$(grep -c 'source ~/.bash_extras' "${ROOT}/configs/zshrc")"
+check zshrc-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ROOT}/configs/zshrc")"
+check profile-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ah2}/.bash_profile")"
 
 # Upgrade: an old loader (aliases + aliases2, no extras) gains extras idempotently.
 ah3="${WORK}/alias_home3"
@@ -140,6 +145,16 @@ check upgrade-keeps-alias-count "1" "$(grep -c 'source ~/.bash_aliases2' "${ah3}
 check upgrade-backup "1" "$(find "${ah3}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
 TARGET_HOME="${ah3}" install_aliases >/dev/null
 check upgrade-idempotent "1" "$(grep -c 'source ~/.bash_extras' "${ah3}/.bashrc")"
+check upgrade-adds-origin-loader "1" "$(grep -c 'source ~/.bash_show_origin' "${ah3}/.bashrc")"
+check upgrade-origin-file "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah3}/.bash_show_origin" && echo same)"
+TARGET_HOME="${ah3}" install_aliases >/dev/null
+check upgrade-origin-idempotent "1" "$(grep -c 'source ~/.bash_show_origin' "${ah3}/.bashrc")"
+check upgrade-origin-single-backup "1" "$(find "${ah3}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
+
+# origin script: parses in bash (and zsh when present); toggle works without a prompt.
+check origin-parse "ok" "$(bash -n "${ROOT}/configs/bash_show_origin" && { ! command -v zsh >/dev/null || zsh -n "${ROOT}/configs/bash_show_origin"; } && echo ok)"
+check origin-toggle "show_origin: off" "$(bash -c 'source '"${ROOT}"'/configs/bash_show_origin; show_origin off')"
+check origin-bad-arg "2" "$(bash -c 'source '"${ROOT}"'/configs/bash_show_origin; show_origin nope 2>/dev/null; echo $?')"
 
 # Both alias files parse and key aliases resolve; mkcd/lt helpers work.
 check extras-parse "ok" "$(bash -n "${ROOT}/configs/bash_extras" && bash -n "${ROOT}/configs/bash_aliases" && echo ok)"

@@ -402,14 +402,22 @@ fi
 
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
+fi
+
+# Show where each alias/function comes from before it runs (last, so it
+# sees everything above). Toggle with: show_origin on|off
+if [ -f ~/.bash_show_origin ]; then
+    source ~/.bash_show_origin
 fi'
 
 # Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
 # the user already has their own ~/.bash_aliases. Then make bash load all
-# alias files. configs/bash_extras always installs as ~/.bash_extras.
+# alias files. configs/bash_extras and configs/bash_show_origin always install
+# as ~/.bash_extras and ~/.bash_show_origin.
 install_aliases() {
   local src="${SCRIPT_DIR}/configs/bash_aliases"
   local extra_src="${SCRIPT_DIR}/configs/bash_extras"
+  local origin_src="${SCRIPT_DIR}/configs/bash_show_origin"
   local dst="${TARGET_HOME}/.bash_aliases"
   if [[ -e "${dst}" ]] && ! files_equal "${src}" "${dst}"; then
     info "Keeping your ${dst}; installing repo aliases as .bash_aliases2"
@@ -417,35 +425,35 @@ install_aliases() {
   fi
   install_file "${src}" "${dst}"
   install_file "${extra_src}" "${TARGET_HOME}/.bash_extras"
+  install_file "${origin_src}" "${TARGET_HOME}/.bash_show_origin"
 
   # ~/.bash_profile when it exists, else ~/.bashrc.
   local rc="${TARGET_HOME}/.bash_profile"
   [[ -f "${rc}" ]] || rc="${TARGET_HOME}/.bashrc"
-  # Upgrade: an older loader has .bash_aliases2 but no .bash_extras line.
-  # Append just the missing block instead of duplicating the whole loader.
+  # Upgrade: an older loader has .bash_aliases2 (or only .bash_extras) but lacks
+  # newer lines. Append just the missing blocks instead of duplicating the loader.
   # Also ensure ~/.local/bin is on PATH (older loaders predate bin scripts).
-  if grep -qsF 'source ~/.bash_aliases2' "${rc}"; then
+  if grep -qsF 'source ~/.bash_aliases2' "${rc}" || grep -qsF 'source ~/.bash_extras' "${rc}"; then
     local missing=""
     grep -qsF 'source ~/.bash_extras' "${rc}" || missing="${missing} extras"
     # shellcheck disable=SC2016 # literal line, matched literally with grep -F
     grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || missing="${missing} path"
+    grep -qsF 'source ~/.bash_show_origin' "${rc}" || missing="${missing} origin"
     if [[ -n "${missing}" ]]; then
       backup_file "${rc}"
       info "Adding${missing} to ${rc}"
       if ((DRY_RUN)); then
         printf '   [dry-run] append%s to %s\n' "${missing}" "${rc}"
       else
-        grep -qsF 'source ~/.bash_extras' "${rc}" || printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
         # shellcheck disable=SC2016 # written literally into the rc file
-        grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || printf '\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${rc}"
+        [[ "${missing}" == *extras* ]] && printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
+        # shellcheck disable=SC2016 # written literally into the rc file
+        [[ "${missing}" == *path* ]] && printf '\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${rc}"
+        [[ "${missing}" == *origin* ]] && printf '\nif [ -f ~/.bash_show_origin ]; then\n    source ~/.bash_show_origin\nfi\n' >>"${rc}"
       fi
       ok "${rc}"
       return 0
     fi
-    ok "${rc} already loads the alias files"
-    return 0
-  fi
-  if grep -qsF 'source ~/.bash_extras' "${rc}"; then
     ok "${rc} already loads the alias files"
     return 0
   fi

@@ -99,3 +99,8 @@ fi
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
 fi
+
+# Show where each alias/function comes from before it runs.
+if [ -f ~/.bash_show_origin ]; then
+    source ~/.bash_show_origin
+fi

@@ -1,0 +1,281 @@
+# ============================================================
+# Command origin display — Bash (3.2+) and Zsh
+#
+# Before a command line runs, print where each alias/function
+# in it comes from, e.g.
+#     ll → ls -la  ~/.bash_aliases:12
+#     mkcd() ~/.bash_extras:40
+#
+# Toggle with:  show_origin on|off|toggle   (or SHOW_ORIGIN=0)
+# Files searched for alias definitions: SHOW_ORIGIN_FILES
+# ============================================================
+
+: "${SHOW_ORIGIN:=1}"
+: "${SHOW_ORIGIN_FILES:=$HOME/.bash_aliases $HOME/.bash_aliases2 $HOME/.bash_extras $HOME/.bashrc $HOME/.zshrc}"
+
+show_origin() {
+    case "${1:-toggle}" in
+        on|1)     SHOW_ORIGIN=1 ;;
+        off|0)    SHOW_ORIGIN=0 ;;
+        toggle)   if [[ $SHOW_ORIGIN == 1 ]]; then SHOW_ORIGIN=0; else SHOW_ORIGIN=1; fi ;;
+        status)   ;;
+        *)        echo "usage: show_origin [on|off|toggle|status]" >&2; return 2 ;;
+    esac
+    if [[ $SHOW_ORIGIN == 1 ]]; then echo "show_origin: on"; else echo "show_origin: off"; fi
+}
+
+# ------------------------------------------------------------
+# Helpers (results go in REPLY to avoid subshells)
+# ------------------------------------------------------------
+
+__so_print() {
+    if [[ -t 2 && -z ${NO_COLOR:-} ]]; then
+        printf '\033[2m%s\033[0m\n' "$*" >&2
+    else
+        printf '%s\n' "$*" >&2
+    fi
+}
+
+__so_tilde() {
+    REPLY=$1
+    case "$REPLY" in "$HOME"/*) REPLY="~${REPLY#"$HOME"}" ;; esac
+}
+
+# __so_alias_value NAME → REPLY=expansion, status 1 if not an alias
+__so_alias_value() {
+    if [[ -n ${ZSH_VERSION:-} ]]; then
+        (( ${+aliases[$1]} )) || return 1
+        REPLY=${aliases[$1]}
+    elif (( BASH_VERSINFO[0] >= 4 )); then
+        [[ -n ${BASH_ALIASES[$1]+x} ]] || return 1
+        REPLY=${BASH_ALIASES[$1]}
+    else
+        local def
+        def=$(alias -- "$1" 2>/dev/null) || return 1
+        eval "REPLY=${def#*=}"          # bash prints a properly quoted value
+    fi
+}
+
+__so_is_function() {
+    if [[ -n ${ZSH_VERSION:-} ]]; then
+        (( ${+functions[$1]} ))
+    else
+        declare -F -- "$1" >/dev/null 2>&1
+    fi
+}
+
+# __so_alias_location NAME VALUE → REPLY="file:line" of the last definition found
+__so_alias_location() {
+    local f list files=()
+    REPLY=
+    if [[ -n ${ZSH_VERSION:-} ]]; then list=(${=SHOW_ORIGIN_FILES}); else list=($SHOW_ORIGIN_FILES); fi
+    for f in "${list[@]}"; do [[ -r $f ]] && files+=("$f"); done
+    (( ${#files[@]} )) || return 1
+    # only trust a line that also contains the current expansion
+    REPLY=$(N="alias $1=" V="$2" awk '
+        { s = $0; sub(/^[ \t]+/, "", s); sub(/^alias[ \t]+-g[ \t]+/, "alias ", s) }
+        index(s, ENVIRON["N"]) == 1 && index(s, ENVIRON["V"]) { hit = FILENAME ":" FNR }
+        END { if (hit != "") print hit }' "${files[@]}" 2>/dev/null)
+    [[ -n $REPLY ]] || return 1
+    __so_tilde "$REPLY"
+}
+
+# __so_function_location NAME → REPLY="file:line" (or best effort)
+__so_function_location() {
+    local file= line=
+    if [[ -n ${ZSH_VERSION:-} ]]; then
+        file=${functions_source[$1]:-}
+        if [[ -r $file ]]; then
+            line=$(N="$1" awk '
+                {
+                    s = $0; sub(/^[ \t]+/, "", s); kw = 0
+                    if (s ~ /^function[ \t]/) { kw = 1; sub(/^function[ \t]+/, "", s) }
+                    if (index(s, ENVIRON["N"]) != 1) next
+                    r = substr(s, length(ENVIRON["N"]) + 1)
+                    if (r ~ /^[ \t]*\(\)/ || (kw && r ~ /^([ \t{]|$)/)) { print FNR; exit }
+                }' "$file" 2>/dev/null)
+        fi
+    else
+        # extdebug makes declare -F report file and line; set it only in a subshell
+        local info
+        info=$(shopt -s extdebug; declare -F -- "$1" 2>/dev/null)
+        read -r _ line file <<< "$info"
+    fi
+    case "$file" in ""|main|environment) file="(defined interactively)"; line= ;; esac
+    __so_tilde "$file"
+    REPLY="$REPLY${line:+:$line}"
+}
+
+# __so_report NAME — print origin of one command word (follows alias chains)
+__so_report() {
+    local name=$1 value next indent= hops=0 seen=" "
+    while (( hops++ < 10 )); do
+        case "$seen" in *" $name "*) return ;; esac
+        seen="$seen$name "
+
+        if __so_alias_value "$name"; then
+            value=$REPLY
+            __so_alias_location "$name" "$value" || REPLY=
+            __so_print "$indent$name → $value${REPLY:+  $REPLY}"
+            next=${value#"${value%%[![:space:]]*}"}   # trim leading space
+            next=${next%%[[:space:]]*}
+            [[ -z $next || $next == "$name" || $next == \\* ]] && return
+            name=$next
+            indent="$indent  "
+            continue
+        fi
+
+        if __so_is_function "$name"; then
+            __so_function_location "$name"
+            __so_print "$indent$name() $REPLY"
+        fi
+        return
+    done
+}
+
+# __so_scan WORD... — walk shell tokens, report each word in command position.
+# Separators must already be separate tokens.
+__so_scan() {
+    local w start=1 skip=0 seen=" "
+    for w in "$@"; do
+        case "$w" in
+            '|'|'||'|'&&'|';'|';;'|'&'|'|&'|'('|')'|'{'|'}'|'!'|'`'| \
+            if|then|else|elif|do|while|until|time|noglob|nocorrect|-)
+                case "$w" in time|noglob|nocorrect|-) ;; *) skip=0 ;; esac
+                start=1; continue ;;
+        esac
+        (( start )) || continue
+        if (( skip )); then start=0; continue; fi
+
+        # leading VAR=value assignments keep us in command position
+        if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
+
+        start=0
+        case "$w" in
+            # these bypass aliases/functions or exec external programs
+            command|builtin|exec|sudo|doas|env|nohup|xargs|show_origin|\\*|\'*|\"*) skip=1; start=1; continue ;;
+        esac
+        case "$seen" in *" $w "*) continue ;; esac
+        seen="$seen$w "
+        __so_report "$w"
+    done
+}
+
+# ------------------------------------------------------------
+# Shell-specific hooks
+# ------------------------------------------------------------
+
+if [[ -n ${ZSH_VERSION:-} ]]; then
+
+    __show_origin_preexec() {
+        emulate -L zsh
+        [[ $SHOW_ORIGIN == 1 ]] || return 0
+        local line=${1:-$3}               # $1 = as typed (aliases unexpanded)
+        [[ -n $line ]] || return 0
+        __so_scan "${(z)line}"
+    }
+
+    autoload -Uz add-zsh-hook
+    add-zsh-hook -d preexec __show_command_origin 2>/dev/null   # old name
+    add-zsh-hook preexec __show_origin_preexec
+
+elif [[ -n ${BASH_VERSION:-} && $- == *i* ]]; then
+
+    __so_scan_line() {
+        local spaced=$1 c toks
+        for c in '|' ';' '&' '(' ')' '{' '}' '`'; do
+            spaced=${spaced//"$c"/ $c }
+        done
+        read -r -a toks <<< "${spaced//$'\n'/ ; }"
+        (( ${#toks[@]} )) && __so_scan "${toks[@]}"
+    }
+
+    # bash-preexec already does the hard part; use it when present.
+    if [[ -n ${bash_preexec_imported:-} || -n ${__bp_imported:-} ]]; then
+
+        __show_origin_preexec() {
+            [[ $SHOW_ORIGIN == 1 ]] || return 0
+            __so_scan_line "$1"
+        }
+        case " ${preexec_functions[*]} " in
+            *" __show_origin_preexec "*) ;;
+            *) preexec_functions+=(__show_origin_preexec) ;;
+        esac
+
+    else
+        # The DEBUG trap fires before every simple command, and by then
+        # aliases are already expanded in $BASH_COMMAND. So: arm from
+        # PROMPT_COMMAND, and on the first user command read the line as
+        # typed from history.
+        __so_armed=
+        __so_last_hist=
+
+        __show_origin_arm() { __so_armed=1; }
+
+        __show_origin_debug() {
+            local last_arg=$1             # preserve $_ for the user's command
+            if [[ -n $__so_armed && $SHOW_ORIGIN == 1 && -z ${COMP_LINE:-} ]]; then
+                case "$BASH_COMMAND" in
+                    __show_origin_arm*) ;;
+                    *)
+                        # skip other PROMPT_COMMAND entries that run after ours
+                        if [[ "${PROMPT_COMMAND[*]}" != *"$BASH_COMMAND"* ]]; then
+                            __so_armed=
+                            __show_origin_from_history
+                        fi ;;
+                esac
+            fi
+            : "$last_arg"
+        }
+
+        __show_origin_from_history() {
+            local h num= line= first
+            h=$(HISTTIMEFORMAT= builtin history 1)
+            if [[ $h =~ ^[[:space:]]*([0-9]+)\*?[[:space:]]+(.*)$ ]]; then
+                num=${BASH_REMATCH[1]}
+                line=${BASH_REMATCH[2]}
+            fi
+            if [[ -n $num && $num != "$__so_last_hist" ]]; then
+                __so_last_hist=$num
+            else
+                # history not updated (ignorespace/ignoredups/history off).
+                # Reuse the old entry only if it plausibly matches what runs.
+                first=${line%%[[:space:]]*}
+                __so_alias_value "$first" && first=${REPLY%%[[:space:]]*}
+                [[ -n $line && ${BASH_COMMAND%%[[:space:]]*} == "$first" ]] \
+                    || line=$BASH_COMMAND
+            fi
+            __so_scan_line "$line"
+        }
+
+        # The DEBUG trap must be installed at top level: inside a sourced
+        # file or a function, `trap -p DEBUG` shows nothing, and bash 3.2
+        # restores the previous trap on return. So defer it to the first
+        # prompt (PROMPT_COMMAND runs at top level) via eval.
+        # Any existing DEBUG trap is chained, not replaced.
+        __so_install='
+            __so_install=
+            __so_existing=$(trap -p DEBUG)
+            if [[ $__so_existing != *__show_origin_debug* ]]; then
+                if [[ -n $__so_existing ]]; then
+                    eval "__so_existing=($__so_existing)"   # → trap -- cmd DEBUG
+                    __so_existing=${__so_existing[2]}
+                fi
+                trap "__show_origin_debug \"\$_\"${__so_existing:+; $__so_existing}" DEBUG
+            fi
+            unset __so_existing'
+
+        __so_pc='[[ -z $__so_install ]] || eval "$__so_install"; __show_origin_arm'
+        case "${PROMPT_COMMAND[*]}" in
+            *__show_origin_arm*) ;;
+            *)
+                if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
+                    PROMPT_COMMAND+=("$__so_pc")
+                else
+                    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}$__so_pc"
+                fi ;;
+        esac
+        unset __so_pc
+    fi
+
+fi
