@@ -322,6 +322,21 @@ install_file() {
   ok "${dst}"
 }
 
+# Install kitty and Ghostty configs. Each terminal has one file per platform
+# (configs/kitty/<os>.conf, configs/ghostty/<os>.config); macOS and Linux
+# (including WSL) get their own. Windows has no native kitty or Ghostty build.
+install_terminal_configs() {
+  local family="$1" os=linux ghostty_dst
+  [[ "${family}" == "macos" ]] && os=macos
+  if [[ "${os}" == "macos" ]]; then
+    ghostty_dst="${TARGET_HOME}/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  else
+    ghostty_dst="${TARGET_HOME}/.config/ghostty/config"
+  fi
+  install_file "${SCRIPT_DIR}/configs/kitty/${os}.conf" "${TARGET_HOME}/.config/kitty/kitty.conf"
+  install_file "${SCRIPT_DIR}/configs/ghostty/${os}.config" "${ghostty_dst}"
+}
+
 install_configs() {
   local family="${1:-}"
   info "Installing configs into ${TARGET_HOME}"
@@ -337,6 +352,7 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
+  install_terminal_configs "${family}"
   install_aliases
   # Scripts only (no PATH appends here): the loader block and repo .zshrc
   # already export ~/.local/bin, so reruns stay idempotent.
