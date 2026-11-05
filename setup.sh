@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 UNAME_S="${UNAME_S:-$(uname -s)}"
 KERNEL_RELEASE_FILE="${KERNEL_RELEASE_FILE:-/proc/sys/kernel/osrelease}"
-PACKAGE_LIST="${PACKAGE_LIST:-${SCRIPT_DIR}/packages/base.txt}"
+CATALOG_FILE="${CATALOG_FILE:-${SCRIPT_DIR}/catalog.txt}"
 TARGET_HOME="${TARGET_HOME:-${HOME}}"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
 
@@ -38,6 +38,9 @@ CONFIG_MAP=(
   "nanorc:.nanorc"
   "zshrc:.zshrc"
 )
+
+# shellcheck source=lib/catalog.sh
+source "${SCRIPT_DIR}/lib/catalog.sh"
 
 if [[ -t 1 ]]; then
   C_BLUE=$'\e[34m' C_YELLOW=$'\e[33m' C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_RESET=$'\e[0m'
@@ -155,15 +158,22 @@ pkg_name() {
   esac
 }
 
-# Read the package list, skipping comments and blank lines.
-read_packages() {
-  local family="$1" line
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line%%#*}"
-    line="${line//[[:space:]]/}"
-    [[ -n "${line}" ]] || continue
-    pkg_name "${family}" "${line}"
-  done <"${PACKAGE_LIST}"
+# Load the catalog items for this machine.
+load_catalog() {
+  local family="$1" platform=linux wsl=0
+  [[ "${family}" == "macos" ]] && platform=macos
+  is_wsl && wsl=1
+  catalog_load "${CATALOG_FILE}" "${platform}" "${wsl}"
+  catalog_hide_unmapped "${family}"
+}
+
+# Print the distro package name of every pkg item.
+selected_packages() {
+  local family="$1" i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_ACTION[i]}" == "pkg" ]] || continue
+    pkg_name "${family}" "${CAT_ITEM[i]}"
+  done
 }
 
 # RHEL/Fedora images ship curl-minimal, which conflicts with the curl package.
@@ -180,7 +190,7 @@ install_packages() {
   # while-read instead of mapfile: macOS bash 3.2 has no mapfile.
   while IFS= read -r pkg; do
     pkgs+=("${pkg}")
-  done < <(read_packages "${family}")
+  done < <(selected_packages "${family}")
   if ((DO_SSH_SERVER)); then
     pkg="$(pkg_name "${family}" openssh-server)"
     # On Arch the client package already includes the server.
@@ -193,7 +203,7 @@ install_packages() {
     done
     pkgs=(${kept[@]+"${kept[@]}"})
   fi
-  ((${#pkgs[@]})) || { warn "no packages in ${PACKAGE_LIST}"; return 0; }
+  ((${#pkgs[@]})) || { warn "no packages selected"; return 0; }
   info "Installing (${family}): ${pkgs[*]}"
 
   case "${family}" in
@@ -719,6 +729,7 @@ main() {
   local family
   family="$(detect_family)"
   info "Detected distro family: ${family}"
+  load_catalog "${family}"
 
   if ((DO_PACKAGES)); then
     if confirm "Install basic packages via ${family} package manager?"; then

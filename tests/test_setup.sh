@@ -62,12 +62,29 @@ check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
-check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
+check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(load_catalog macos; selected_packages macos | xargs)"
 
-printf '%s\n' '# comment' '' 'tmux' 'vim  # editor' >"${WORK}/pkgs.txt"
-check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages fedora | xargs)"
-printf '%s\n' tmux which vim >"${WORK}/pkgs.txt"
-check package-list-skip-empty "tmux vim" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages debian | xargs)"
+# Catalog parsing and platform filtering.
+FIXTURE="${ROOT}/tests/fixtures/catalog.txt"
+keys_for() { (catalog_load "${FIXTURE}" "$1" "$2"; local i; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs); }
+check catalog-linux "shell.zsh shell.less configs.tmux" "$(keys_for linux 0)"
+check catalog-wsl "shell.zsh shell.less configs.tmux terminals.wezterm-wsl" "$(keys_for linux 1)"
+check catalog-macos "shell.zsh configs.tmux terminals.ghostty" "$(keys_for macos 0)"
+check catalog-groups "shell configs terminals" "$(catalog_load "${FIXTURE}" linux 1; catalog_groups | xargs)"
+check catalog-fields "tmux config|on|step:configs" "$(catalog_load "${FIXTURE}" linux 0; printf '%s|%s|%s' "${CAT_LABEL[2]}" "${CAT_DEFAULT[2]}" "${CAT_ACTION[2]}")"
+check catalog-real-scoop-action "scoop:main/cmder" "$(catalog_load "${ROOT}/catalog.txt" windows 0; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "${CAT_ITEM[i]}" == cmder ]] && echo "${CAT_ACTION[i]}"; done)"
+check catalog-crlf "shell.zsh" "$(sed 's/$/\r/' "${FIXTURE}" >"${WORK}/crlf.txt"; catalog_load "${WORK}/crlf.txt" macos 0; catalog_key 0)"
+# Malformed catalogs stop with the line number.
+bad_catalog() { printf '%s\n' '# comment' "$1" >"${WORK}/bad.txt"; (catalog_load "${WORK}/bad.txt" linux 0) 2>&1 | grep -o 'catalog.*line 2' | sed 's/.*line/line/'; }
+check catalog-too-few "line 2" "$(bad_catalog 'a|b|c|linux|on')"
+check catalog-too-many "line 2" "$(bad_catalog 'a|b|c|linux|on|pkg|x')"
+check catalog-bad-default "line 2" "$(bad_catalog 'a|b|c|linux|maybe|pkg')"
+check catalog-bad-platform "line 2" "$(bad_catalog 'a|b|c|plan9|on|pkg')"
+check catalog-bad-action "line 2" "$(bad_catalog 'a|b|c|linux|on|nope')"
+check catalog-missing-file "1" "$( (catalog_load "${WORK}/none.txt" linux 0) >/dev/null 2>&1; echo $?)"
+# A pkg item with no package on this distro is hidden; steps are not.
+printf '%s\n' 'shell|tmux|tmux|macos|on|pkg' 'shell|less|less|macos|on|pkg' 'configs|tmux|tmux|macos|on|step:configs' >"${WORK}/mapped.txt"
+check catalog-hides-unmapped "shell.tmux configs.tmux" "$(catalog_load "${WORK}/mapped.txt" macos 0; catalog_hide_unmapped macos; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs)"
 
 # --ssh-server on Arch: openssh is listed once.
 check arch-sshd-dedup "1" "$(DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"

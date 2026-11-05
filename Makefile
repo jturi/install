@@ -11,7 +11,7 @@
 .PHONY: lint test test-bash32 test-docker check test-all
 .PHONY: sync-dotfiles
 
-SHELL_FILES := setup.sh tests/*.sh
+SHELL_FILES := setup.sh lib/*.sh tests/*.sh
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 

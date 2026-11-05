@@ -69,7 +69,7 @@ package manager:
 
 ## What it installs
 
-- Packages: `packages/base.txt`, grouped:
+- Packages: `pkg` lines in `catalog.txt`, grouped:
   - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, man-db
   - system: sudo, htop, procps, lsof, which, file, diffutils
   - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
@@ -185,8 +185,8 @@ exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
 
 ## Add more
 
-- Package: add a line to `packages/base.txt`. Add a `pkg_name` case if the
-  name differs on a distro.
+- Package: add a line to `catalog.txt`. Add a `pkg_name` case if the name
+  differs on a distro.
 - Config: put the file in `configs/` and add `"src:target"` to `CONFIG_MAP`
   in `setup.sh`.
 
