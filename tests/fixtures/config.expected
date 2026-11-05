@@ -1,0 +1,10 @@
+# Saved by the installer. 1 = install, 0 = leave alone. Safe to edit by hand.
+configs.tmux=0
+other.thing=1
+shell.less=1
+shell.zsh=1
+terminals.cmder=1
+terminals.ghostty=1
+terminals.wezterm-wsl=0
+win-apps.vlc=0
+win-setup.profile=1

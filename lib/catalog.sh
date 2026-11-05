@@ -1,4 +1,4 @@
-# shellcheck shell=bash
+# shellcheck shell=bash disable=SC2034 # CAT_* arrays are read by setup.sh and menu.sh
 # Catalog of selectable items. Sourced by setup.sh; needs die() and pkg_name().
 # Works with bash 3.2: parallel arrays instead of associative ones.
 #
@@ -95,4 +95,79 @@ catalog_groups() {
     seen="${seen}${CAT_GROUP[i]} "
     printf '%s\n' "${CAT_GROUP[i]}"
   done
+}
+
+# --- Saved selection ---------------------------------------------------------
+
+CAT_SEL=() CAT_NEW=() CONFIG_EXTRA=()
+CONFIG_HEADER='# Saved by the installer. 1 = install, 0 = leave alone. Safe to edit by hand.'
+
+config_default_path() {
+  printf '%s\n' "${TARGET_HOME}/.local/bootstrap/config"
+}
+
+# Set CAT_SEL and CAT_NEW from a config file, or from catalog defaults when the
+# file is missing. Keys for other platforms go to CONFIG_EXTRA and stay on save.
+# Reads files edited on Windows: a UTF-8 BOM and CRLF line endings are fine.
+config_load() {
+  local file="$1" i line n=0 key value matched
+  local -a seen=()
+  CAT_SEL=() CAT_NEW=() CONFIG_EXTRA=()
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    if [[ "${CAT_DEFAULT[i]}" == "on" ]]; then CAT_SEL[i]=1; else CAT_SEL[i]=0; fi
+    CAT_NEW[i]=0
+    seen[i]=0
+  done
+  [[ -f "${file}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    n=$((n + 1))
+    ((n > 1)) || line="${line#$'\xEF\xBB\xBF'}"
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" || "${line}" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ "${line}" != *=* || -z "${key}" || ( "${value}" != "0" && "${value}" != "1" ) ]]; then
+      warn "${file} line ${n}: ignoring '${line}'"
+      continue
+    fi
+    matched=0
+    for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+      if [[ "${CAT_GROUP[i]}.${CAT_ITEM[i]}" == "${key}" ]]; then
+        CAT_SEL[i]="${value}"
+        seen[i]=1
+        matched=1
+        break
+      fi
+    done
+    ((matched)) || CONFIG_EXTRA+=("${line}")
+  done <"${file}"
+
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    ((seen[i])) || CAT_NEW[i]=1
+  done
+}
+
+# Write the selection atomically, keeping keys for other platforms. All lines
+# are sorted bytewise so setup.ps1 writes identical bytes. Returns non-zero on
+# failure and leaves the old file in place.
+config_save() {
+  local file="$1" tmp="$1.tmp.$$" i
+  ((!DRY_RUN)) || return 0
+  mkdir -p "$(dirname "${file}")" || return 1
+  {
+    printf '%s\n' "${CONFIG_HEADER}"
+    {
+      for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+        printf '%s.%s=%s\n' "${CAT_GROUP[i]}" "${CAT_ITEM[i]}" "${CAT_SEL[i]}"
+      done
+      [[ ${#CONFIG_EXTRA[@]} -eq 0 ]] || printf '%s\n' "${CONFIG_EXTRA[@]}"
+    } | LC_ALL=C sort -u
+  } >"${tmp}" || { rm -f "${tmp}"; return 1; }
+  if [[ -f "${file}" ]] && files_equal "${tmp}" "${file}"; then
+    rm -f "${tmp}"
+    return 0
+  fi
+  backup_file "${file}" || { rm -f "${tmp}"; return 1; }
+  mv -f "${tmp}" "${file}" || { rm -f "${tmp}"; return 1; }
 }

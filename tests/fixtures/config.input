@@ -1,0 +1,14 @@
+﻿# my notes
+
+shell.zsh=1
+shell.less=1
+configs.tmux=0
+terminals.ghostty=1
+terminals.wezterm-wsl=0
+terminals.cmder=1
+win-apps.vlc=0
+win-setup.profile=1
+other.thing=1
+noequals
+=1
+bad.value=2

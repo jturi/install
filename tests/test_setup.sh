@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031 # tests change state inside subshells on purpose
 # Unit tests for setup.sh: distro detection, package mapping, config install.
 set -euo pipefail
 
@@ -87,7 +88,9 @@ printf '%s\n' 'shell|tmux|tmux|macos|on|pkg' 'shell|less|less|macos|on|pkg' 'con
 check catalog-hides-unmapped "shell.tmux configs.tmux" "$(catalog_load "${WORK}/mapped.txt" macos 0; catalog_hide_unmapped macos; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs)"
 
 # --ssh-server on Arch: openssh is listed once.
-check arch-sshd-dedup "1" "$(DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+check arch-sshd-dedup "1" "$(load_catalog arch; DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+# An empty selection plus the SSH server must not trip set -u on bash 3.2.
+check empty-selection-ssh-server "openssh" "$( (set -u; CAT_ITEM=() CAT_ACTION=(); DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null) | grep -o 'openssh$' | head -n 1)"
 
 # Config install: fresh, idempotent, backup on change.
 # (Terminal configs are opt-in via setup_terminals, not install_configs.)
@@ -276,6 +279,54 @@ PATH="${stub}:${PATH}" TARGET_HOME="${t_home}" TERMINAL_MODE=install setup_termi
 check wezterm-linux-no-scoop "" "$(cat "${WORK}/scoop.log")"
 PATH="${stub}:${PATH}" KERNEL_RELEASE_FILE="${WORK}/osrelease-wsl" WINDOWS_HOME="${win_home}" TARGET_HOME="${t_home}" TERMINAL_MODE=install setup_terminals linux >/dev/null 2>&1
 check wezterm-wsl-uses-scoop "install wezterm" "$(tail -n 1 "${WORK}/scoop.log")"
+
+# Saved selection.
+selection_of() { # <config file> <key>
+  catalog_load "${FIXTURE}" linux 1
+  config_load "$1" 2>/dev/null
+  local i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "$(catalog_key "${i}")" == "$2" ]] && printf '%s/%s' "${CAT_SEL[i]}" "${CAT_NEW[i]}"
+  done
+}
+cfg="${WORK}/cfg"
+check config-path "${WORK}/h/.local/bootstrap/config" "$(TARGET_HOME="${WORK}/h" config_default_path)"
+check config-missing-uses-defaults "1/0" "$(selection_of "${WORK}/none" shell.zsh)"
+check config-missing-off-default "0/0" "$(selection_of "${WORK}/none" shell.less)"
+printf 'shell.zsh=0\nshell.less=1\n' >"${cfg}"
+check config-reads-off "0/0" "$(selection_of "${cfg}" shell.zsh)"
+check config-reads-on "1/0" "$(selection_of "${cfg}" shell.less)"
+check config-new-item "1/1" "$(selection_of "${cfg}" configs.tmux)"
+check config-bom-crlf-first-key "1/0" "$(selection_of "${ROOT}/tests/fixtures/config.input" shell.zsh)"
+check config-bom-crlf-later-key "0/0" "$(selection_of "${ROOT}/tests/fixtures/config.input" configs.tmux)"
+printf 'shell.zsh=2\nconfigs.tmux\n=1\n' >"${cfg}.bad"
+check config-bad-value-default "1/1" "$(selection_of "${cfg}.bad" shell.zsh)"
+check config-bad-lines-warn "3" "$(catalog_load "${FIXTURE}" linux 1; config_load "${cfg}.bad" 2>&1 | grep -c 'ignoring')"
+# Saving: both engines must write these exact bytes.
+save_fixture() { # <target>
+  catalog_load "${FIXTURE}" linux 1
+  config_load "${ROOT}/tests/fixtures/config.input" 2>/dev/null
+  config_save "$1"
+}
+(save_fixture "${WORK}/save/config")
+check config-save-bytes "same" "$(cmp "${WORK}/save/config" "${ROOT}/tests/fixtures/config.expected" && echo same)"
+(save_fixture "${WORK}/a b/.local/bootstrap/config")
+check config-save-space-path "same" "$(cmp "${WORK}/a b/.local/bootstrap/config" "${ROOT}/tests/fixtures/config.expected" && echo same)"
+(save_fixture "${WORK}/save/config")
+check config-unchanged-no-backup "0" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+printf 'shell.zsh=0\n' >"${WORK}/save/config"
+(save_fixture "${WORK}/save/config")
+check config-changed-one-backup "1" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+check config-no-temp-left "0" "$(find "${WORK}/save" -name '*.tmp.*' | wc -l | tr -d ' ')"
+check config-dry-run-writes-nothing "no" "$(DRY_RUN=1; save_fixture "${WORK}/dry/config"; [[ -e "${WORK}/dry" ]] && echo yes || echo no)"
+if [[ "${EUID}" -ne 0 ]]; then
+  mkdir -p "${WORK}/ro"
+  printf 'shell.zsh=0\n' >"${WORK}/ro/config"
+  chmod 555 "${WORK}/ro"
+  check config-readonly-fails "1" "$( (save_fixture "${WORK}/ro/config") >/dev/null 2>&1; echo $?)"
+  check config-readonly-keeps-old "shell.zsh=0" "$(cat "${WORK}/ro/config")"
+  chmod 755 "${WORK}/ro"
+fi
 
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
