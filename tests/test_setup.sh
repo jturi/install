@@ -278,6 +278,10 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=ask setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
 fi
 
+# Containers can run under a UID with no passwd entry: `id -un` then fails.
+# shellcheck disable=SC2329 # the stub is called through login_shell
+check login-shell-no-passwd "ok" "$( (set -e; id() { return 1; }; USER=nobody-here; login_shell >/dev/null; echo ok) 2>/dev/null )"
+
 # zsh login shell: ask mode without a terminal never changes anything.
 check zsh-ask-noninteractive "" "$(ZSH_DEFAULT_MODE=ask setup_zsh_default </dev/null 2>/dev/null | grep -i 'setting login shell')"
 check zsh-skip "" "$(ZSH_DEFAULT_MODE=skip setup_zsh_default 2>&1)"

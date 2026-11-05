@@ -618,7 +618,7 @@ setup_ssh_key() {
     { warn "ssh-keygen not found; install the OpenSSH client first"; return 0; }
 
   key="${TARGET_HOME}/.ssh/id_ed25519"
-  local -a args=(-t ed25519 -f "${key}" -C "${USER:-$(id -un)}@$(hostname 2>/dev/null || uname -n)")
+  local -a args=(-t ed25519 -f "${key}" -C "$(current_user)@$(hostname 2>/dev/null || uname -n)")
   # Without a terminal ssh-keygen cannot ask for a passphrase.
   [[ -t 0 ]] || args+=(-N "")
   run mkdir -p "${TARGET_HOME}/.ssh"
@@ -630,12 +630,18 @@ setup_ssh_key() {
   fi
 }
 
+# Print the user name. Containers can run under a UID with no passwd entry.
+current_user() {
+  id -un 2>/dev/null || printf '%s\n' "${USER:-}"
+}
+
 # Print the login shell of the current user.
 login_shell() {
   local user
-  user="$(id -un)"
+  user="$(current_user)"
   if command -v getent >/dev/null 2>&1; then
-    getent passwd "${user}" | cut -d: -f7
+    # No passwd entry is an unknown shell, not an error (pipefail would abort).
+    getent passwd "${user}" | cut -d: -f7 || true
   elif [[ "${UNAME_S}" == "Darwin" ]]; then
     dscl . -read "/Users/${user}" UserShell | awk '{print $2}'
   else
@@ -674,7 +680,7 @@ setup_zsh_default() {
   if [[ "${UNAME_S}" == "Darwin" ]]; then
     run chsh -s "${zsh_path}"
   else
-    as_root usermod -s "${zsh_path}" "$(id -un)"
+    as_root usermod -s "${zsh_path}" "$(current_user)"
   fi
   ((DRY_RUN)) || ok "login shell set to zsh; log out and back in to use it"
 }

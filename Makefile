@@ -63,6 +63,8 @@ lint: ## shellcheck all scripts
 
 test: ## Unit tests (no root, no containers)
 	bash tests/test_setup.sh
+	bash tests/test_repo.sh --self-test
+	bash tests/test_repo.sh
 
 test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash)
 	docker run --rm --user 1000 -e HOME=/tmp/h -v "$(CURDIR):/src:ro" bash:3.2 \
