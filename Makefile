@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help
-.PHONY: install install-yes dry-run packages configs terminals ssh-key ssh-server zsh-default
+.PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default
 .PHONY: lint test test-bash32 test-docker check test-all
 .PHONY: sync-dotfiles
 
@@ -28,14 +28,17 @@ help: ## Show this help
 
 ##@ Install
 
-install: ## Full setup: packages, configs, SSH key + zsh prompts
+install: ## Choose what to install in a menu, then install it
 	./setup.sh $(ARGS)
 
-install-yes: ## Full setup without prompts (no SSH key, shell unchanged)
+install-yes: ## Full setup without prompts: saved selection, else defaults
 	./setup.sh --yes $(ARGS)
 
 dry-run: ## Show what install would do, change nothing
 	./setup.sh --dry-run $(ARGS)
+
+select: ## Choose and save a selection, install nothing
+	./setup.sh --select $(ARGS)
 
 packages: ## Install packages only
 	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default $(ARGS)
