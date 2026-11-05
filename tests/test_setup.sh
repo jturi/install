@@ -328,6 +328,59 @@ if [[ "${EUID}" -ne 0 ]]; then
   chmod 755 "${WORK}/ro"
 fi
 
+# Menu key handling, with no terminal involved.
+menu_setup() { # <catalog> [rows]
+  catalog_load "$1" linux 1
+  config_load "${WORK}/none"
+  MENU_ROWS="${2:-20}"
+  menu_init
+}
+press() { local k; for k in "$@"; do menu_handle_key "${k}"; done; }
+big="${WORK}/big.txt"
+for ((n = 1; n <= 20; n++)); do printf 'big|i%s|Item %s|linux|on|step:x\n' "${n}" "${n}"; done >"${big}"
+check menu-down "1" "$(menu_setup "${FIXTURE}"; press down; echo "${MENU_CURSOR}")"
+check menu-down-stops "2" "$(menu_setup "${FIXTURE}"; press down down down down; echo "${MENU_CURSOR}")"
+check menu-up-stops "0" "$(menu_setup "${FIXTURE}"; press up; echo "${MENU_CURSOR}")"
+check menu-summary "1/2 selected" "$(menu_setup "${FIXTURE}"; menu_group_summary shell)"
+check menu-space-partial-selects-all "2/2 selected" "$(menu_setup "${FIXTURE}"; press space; menu_group_summary shell)"
+check menu-space-full-clears "0/2 selected" "$(menu_setup "${FIXTURE}"; press space space; menu_group_summary shell)"
+check menu-enter-opens "shell" "$(menu_setup "${FIXTURE}"; press enter; echo "${MENU_OPEN_GROUP}")"
+check menu-space-inside-toggles-one "2/2 selected" "$(menu_setup "${FIXTURE}"; press enter down space; menu_group_summary shell)"
+check menu-back-closes "|1" "$(menu_setup "${FIXTURE}"; press down enter back; echo "${MENU_OPEN_GROUP}|${MENU_CURSOR}")"
+check menu-enter-single-item-toggles "|0/1 selected" "$(menu_setup "${FIXTURE}"; press down enter; echo "${MENU_OPEN_GROUP}|$(menu_group_summary configs)")"
+check menu-back-at-top-is-harmless "0" "$(menu_setup "${FIXTURE}"; press back; echo "${MENU_CURSOR}")"
+check menu-continue "continue" "$(menu_setup "${FIXTURE}"; press continue; echo "${MENU_RESULT}")"
+check menu-quit "quit" "$(menu_setup "${FIXTURE}"; press enter quit; echo "${MENU_RESULT}")"
+# A list taller than the screen scrolls with the cursor.
+check menu-scroll-down "7|3" "$(menu_setup "${big}" 5; press enter down down down down down down down; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-scroll-up "2|2" "$(menu_setup "${big}" 5; press enter down down down down down down down up up up up up; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-scroll-bottom "19|15" "$(menu_setup "${big}" 5; press enter; for ((n = 0; n < 30; n++)); do press down; done; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-render-window "5" "$(menu_setup "${big}" 5; press enter; menu_render | grep -c 'Item ')"
+check menu-render-has-cursor-row "1" "$(menu_setup "${big}" 5; press enter down down down down down down down; menu_render | grep -c '^> .*Item 8')"
+printf 'shell.zsh=1\n' >"${cfg}.new"
+check menu-render-new "1" "$(catalog_load "${FIXTURE}" linux 1; config_load "${cfg}.new"; MENU_ROWS=20; menu_init; press enter; menu_render | grep -c 'less.*new')"
+check menu-available-dumb "no" "$(TERM=dumb menu_available && echo yes || echo no)"
+check menu-available-pipe "no" "$(TERM=xterm menu_available </dev/null && echo yes || echo no)"
+
+# The real menu in a pseudo-terminal: arrow, space, continue. BSD script differs,
+# so this runs only where `script -qec` works (not in the bash 3.2 image).
+if script -qec true /dev/null >/dev/null 2>&1; then
+  cat >"${WORK}/menu_driver.sh" <<DRIVER
+source "${ROOT}/setup.sh"
+set +e
+before="\$(stty -g)"
+catalog_load "${FIXTURE}" linux 1
+config_load "${WORK}/none"
+menu_run; rc=\$?
+{ echo "rc=\${rc}"; menu_group_summary configs; [[ "\$(stty -g)" == "\${before}" ]] && echo restored; } >"${WORK}/menu_result"
+DRIVER
+  { sleep 1; printf '\033[B \033[Bc'; sleep 1; } | script -qec "bash ${WORK}/menu_driver.sh" "${WORK}/menu_log" >/dev/null 2>&1
+  check menu-pty "rc=0 0/1 selected restored" "$(xargs <"${WORK}/menu_result")"
+  check menu-pty-cursor-shown "1" "$(grep -c $'\033\[?25h' "${WORK}/menu_log")"
+else
+  printf 'SKIP menu-pty: no util-linux script\n'
+fi
+
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
 mkdir -p "${home}/.ssh"

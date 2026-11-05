@@ -41,6 +41,8 @@ CONFIG_MAP=(
 
 # shellcheck source=lib/catalog.sh
 source "${SCRIPT_DIR}/lib/catalog.sh"
+# shellcheck source=lib/menu.sh
+source "${SCRIPT_DIR}/lib/menu.sh"
 
 if [[ -t 1 ]]; then
   C_BLUE=$'\e[34m' C_YELLOW=$'\e[33m' C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_RESET=$'\e[0m'
