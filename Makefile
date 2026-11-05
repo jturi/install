@@ -49,7 +49,7 @@ ssh-key: ## Create an ed25519 SSH key if none exists
 ssh-server: ## Install the OpenSSH server and enable sshd (macOS: Remote Login)
 	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default --ssh-server $(ARGS)
 
-terminals: ## Install kitty + Ghostty packages and configs
+terminals: ## Install kitty + Ghostty (WSL: also WezTerm via Scoop) and configs
 	./setup.sh $(ONLY) --terminal $(ARGS)
 
 zsh-default: ## Make zsh the login shell

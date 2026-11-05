@@ -18,6 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 UNAME_S="${UNAME_S:-$(uname -s)}"
+KERNEL_RELEASE_FILE="${KERNEL_RELEASE_FILE:-/proc/sys/kernel/osrelease}"
 PACKAGE_LIST="${PACKAGE_LIST:-${SCRIPT_DIR}/packages/base.txt}"
 TARGET_HOME="${TARGET_HOME:-${HOME}}"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
@@ -67,8 +68,9 @@ Options:
       --no-ssh-key   Do not check for an SSH key
       --zsh-default  Make zsh the login shell (no prompt)
       --no-zsh-default  Keep the current login shell
-      --terminal     Install kitty + Ghostty packages and configs (no prompt)
-      --no-terminal  Skip kitty + Ghostty (no prompt)
+      --terminal     Install kitty + Ghostty packages and configs (no prompt);
+                     under WSL also WezTerm on Windows, via Scoop
+      --no-terminal  Skip all terminals (no prompt)
   -h, --help         Show this help
 EOF
 }
@@ -374,25 +376,67 @@ install_terminal_packages() {
   esac
 }
 
-# Offer to install the kitty + Ghostty terminals and their configs.
+# True under WSL, where Linux can run Windows programs.
+is_wsl() {
+  [[ -r "${KERNEL_RELEASE_FILE}" && "$(<"${KERNEL_RELEASE_FILE}")" == *[Mm]icrosoft* ]]
+}
+
+# Print the Windows user's home as a WSL path. WINDOWS_HOME overrides it.
+windows_home() {
+  if [[ -n "${WINDOWS_HOME:-}" ]]; then
+    printf '%s\n' "${WINDOWS_HOME}"
+    return 0
+  fi
+  local dir
+  dir="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null)" || return 1
+  dir="${dir%$'\r'}"
+  [[ -n "${dir}" ]] || return 1
+  wslpath "${dir}"
+}
+
+# WSL only: install WezTerm on the Windows side with Scoop and copy its config
+# to the Windows home. WezTerm is in the extras bucket, which a fresh Scoop
+# lacks. If adding it fails, `scoop install` reports that.
+install_windows_terminal() {
+  if command -v scoop >/dev/null 2>&1; then
+    run scoop bucket add extras || true
+    run scoop install wezterm || warn "WezTerm install failed (scoop)"
+  else
+    warn "scoop not found on PATH; install it from https://scoop.sh, then run: scoop bucket add extras; scoop install wezterm"
+  fi
+  local home
+  if home="$(windows_home)"; then
+    install_file "${SCRIPT_DIR}/configs/wezterm/windows.lua" "${home}/.wezterm.lua"
+  else
+    warn "cannot find the Windows home; skipping .wezterm.lua"
+  fi
+}
+
+# Offer to install the kitty + Ghostty terminals and their configs, plus
+# WezTerm on Windows when running under WSL.
 # Opt-in: default is No (empty reply skips). No prompt under --terminal /
 # --no-terminal, --yes, --dry-run, or without a terminal; --yes still skips
 # (opt-in stays off) unless --terminal was given.
 setup_terminals() {
-  local family="$1"
+  local family="$1" names="kitty and Ghostty"
   [[ "${TERMINAL_MODE}" == "skip" ]] && return 0
+  is_wsl && names="kitty, Ghostty and Windows WezTerm"
   if [[ "${TERMINAL_MODE}" == "ask" ]]; then
     if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
       info "skipping kitty + Ghostty (rerun with --terminal to install)"
       return 0
     fi
     local reply
-    read -r -p "Install kitty and Ghostty plus their configs? [y/N] " reply
+    read -r -p "Install ${names} plus their configs? [y/N] " reply
     [[ "${reply}" =~ ^[Yy]$ ]] || { info "skipping kitty + Ghostty"; return 0; }
   fi
   info "Installing kitty + Ghostty"
   install_terminal_packages "${family}"
   install_terminal_configs "${family}"
+  if is_wsl; then
+    info "Installing WezTerm on Windows"
+    install_windows_terminal
+  fi
 }
 
 install_configs() {

@@ -98,7 +98,12 @@ package manager:
     `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` on
     macOS. Ghostty has no Debian/Ubuntu apt package, so there only kitty
     installs via apt (install Ghostty from https://ghostty.org/download).
-- `--terminal`: install the kitty + Ghostty packages and configs without asking.
+    Under WSL the same step also installs WezTerm on the Windows side
+    (`scoop bucket add extras`, `scoop install wezterm`) and copies
+    `configs/wezterm/windows.lua` → `%USERPROFILE%\.wezterm.lua`. Scoop must
+    already be on `PATH` (see https://scoop.sh); without it, only the config is
+    copied. There is no native Windows run of `setup.sh`: start it from WSL.
+- `--terminal`: install the terminal packages and configs without asking.
 - `--no-terminal`: skip the question entirely.
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
@@ -196,7 +201,7 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make install-yes` | full setup, no prompts (no SSH key, no terminals, shell unchanged) |
 | `make dry-run` | show what would run, change nothing |
 | `make packages` / `make configs` | only packages / only configs |
-| `make terminals` | install kitty + Ghostty packages and configs |
+| `make terminals` | install kitty + Ghostty packages and configs (WSL: also WezTerm via Scoop) |
 | `make ssh-key` | create an ed25519 key if none exists |
 | `make ssh-server` | install and enable the OpenSSH server |
 | `make zsh-default` | make zsh the login shell |

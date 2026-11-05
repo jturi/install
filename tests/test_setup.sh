@@ -10,6 +10,9 @@ set +e
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 FAILS=0
+# Tests may run under WSL: never touch the real Windows home or Scoop.
+echo "6.0.0-generic" >"${WORK}/osrelease-linux"
+KERNEL_RELEASE_FILE="${WORK}/osrelease-linux"
 
 check() {
   local name="$1" want="$2" got="$3"
@@ -224,6 +227,38 @@ TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux >/d
 check terminal-yes-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
 check terminal-skip-msg "skipping kitty + Ghostty" "$(printf 'n\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
 check terminal-yes-msg "skipping kitty + Ghostty" "$(TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
+
+# WSL: WezTerm through Scoop on the Windows side, config in the Windows home.
+echo "6.18.33.2-microsoft-standard-WSL2" >"${WORK}/osrelease-wsl"
+check wsl-detected "yes" "$(KERNEL_RELEASE_FILE="${WORK}/osrelease-wsl" is_wsl && echo yes)"
+check wsl-not-on-linux "no" "$(is_wsl && echo yes || echo no)"
+check wsl-missing-file "no" "$(KERNEL_RELEASE_FILE=/nonexistent is_wsl && echo yes || echo no)"
+stub="${WORK}/stub"
+win_home="${WORK}/win_home"
+mkdir -p "${stub}" "${win_home}"
+cat >"${stub}/scoop" <<STUB
+#!/bin/sh
+echo "\$*" >>"${WORK}/scoop.log"
+[ "\$1" != bucket ]
+STUB
+chmod +x "${stub}/scoop"
+PATH="${stub}:${PATH}" WINDOWS_HOME="${win_home}" install_windows_terminal >/dev/null 2>&1
+check wezterm-scoop-calls "bucket add extras|install wezterm" "$(paste -sd '|' "${WORK}/scoop.log")"
+check wezterm-config-copied "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lua" "${win_home}/.wezterm.lua" && echo same)"
+# No Scoop: warn, still copy the config (as kitty does when its package fails).
+nobin="${WORK}/nobin"
+mkdir -p "${nobin}"
+for tool in cat cmp cp date dirname mkdir rm; do ln -s "$(command -v "${tool}")" "${nobin}/${tool}"; done
+rm -f "${win_home}/.wezterm.lua"
+check wezterm-no-scoop-warns "scoop not found" "$(PATH="${nobin}" WINDOWS_HOME="${win_home}" install_windows_terminal 2>&1 | grep -o 'scoop not found')"
+check wezterm-no-scoop-config "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lua" "${win_home}/.wezterm.lua" && echo same)"
+# Plain Linux: --terminal never reaches Scoop.
+: >"${WORK}/scoop.log"
+install_terminal_packages() { :; }
+PATH="${stub}:${PATH}" TARGET_HOME="${t_home}" TERMINAL_MODE=install setup_terminals linux >/dev/null 2>&1
+check wezterm-linux-no-scoop "" "$(cat "${WORK}/scoop.log")"
+PATH="${stub}:${PATH}" KERNEL_RELEASE_FILE="${WORK}/osrelease-wsl" WINDOWS_HOME="${win_home}" TARGET_HOME="${t_home}" TERMINAL_MODE=install setup_terminals linux >/dev/null 2>&1
+check wezterm-wsl-uses-scoop "install wezterm" "$(tail -n 1 "${WORK}/scoop.log")"
 
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
