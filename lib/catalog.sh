@@ -44,7 +44,7 @@ catalog_load() {
   local file="$1" platform="$2" wsl="$3"
   [[ -r "${file}" ]] || die "cannot read catalog: ${file}"
   CAT_GROUP=() CAT_ITEM=() CAT_LABEL=() CAT_DEFAULT=() CAT_ACTION=()
-  local line n=0 group item label platforms def action extra problem
+  local line n=0 group item label platforms def action extra problem seen=" "
   while IFS= read -r line || [[ -n "${line}" ]]; do
     n=$((n + 1))
     line="${line%$'\r'}"
@@ -53,6 +53,8 @@ catalog_load() {
     problem="$(catalog_line_error "${item}" "${label}" "${platforms}" "${def}" "${action}" "${extra}" "${group}")"
     [[ -z "${problem}" ]] || die "bad catalog ${file} line ${n}: ${problem}"
     catalog_matches "${platforms}" "${platform}" "${wsl}" || continue
+    [[ "${seen}" != *" ${group}.${item} "* ]] || die "bad catalog ${file} line ${n}: duplicate key ${group}.${item}"
+    seen="${seen}${group}.${item} "
     CAT_GROUP+=("${group}")
     CAT_ITEM+=("${item}")
     CAT_LABEL+=("${label}")

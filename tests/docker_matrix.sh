@@ -38,7 +38,16 @@ for image in "${IMAGES[@]}"; do
       cmp /src/configs/nanorc ~/.nanorc
       test -f ~/.tmux/plugins/tpm/tpm
       tmux -f ~/.tmux.conf new-session -d -s t && tmux kill-server
-      echo "verified: packages, configs, tpm, tmux config loads"
+      ls ~/.local/bootstrap/logs/setup-*.log >/dev/null
+      # Rerun: idempotent. No package install, no new backups, all steps OK.
+      before=$(find ~ -name "*.bak.*" | wc -l)
+      out=$(/src/setup.sh --yes --ssh-server --ssh-key --zsh-default </dev/null 2>&1)
+      echo "$out" | grep -q "nothing to install" || { echo "$out"; echo "rerun reinstalled packages"; exit 1; }
+      [ "$(find ~ -name "*.bak.*" | wc -l)" -eq "$before" ] || { echo "rerun made backups"; exit 1; }
+      # Containers have no systemd, so only the ssh server step may warn.
+      echo "$out" | grep -E "^  .*(FAILED|WARN) " | grep -v "WARN .* ssh server" && { echo "rerun not clean"; exit 1; }
+      echo "$out" | sed -n "/==> Summary/,\$p"
+      echo "verified: packages, configs, tpm, tmux config loads, rerun is a no-op"
     '; then
     printf 'PASS %s\n' "${image}"
   else

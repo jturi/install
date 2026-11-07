@@ -11,7 +11,7 @@
 .PHONY: lint test test-bash32 test-docker check test-all
 .PHONY: sync-dotfiles
 
-SHELL_FILES := setup.sh lib/*.sh tests/*.sh
+SHELL_FILES := setup.sh bootstrap.sh lib/*.sh tests/*.sh
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 
@@ -63,11 +63,15 @@ zsh-default: ## Make zsh the login shell
 lint: ## shellcheck all scripts
 	shellcheck -x $(SHELL_FILES) configs/bin/*.sh
 	shellcheck -s bash configs/bash_aliases configs/bash_extras
+	@if command -v pwsh >/dev/null 2>&1; then \
+	  pwsh -NoProfile -Command '$$e=$$null; [System.Management.Automation.Language.Parser]::ParseFile("bootstrap.ps1",[ref]$$null,[ref]$$e) | Out-Null; if ($$e.Count) { $$e; exit 1 }; "bootstrap.ps1 parses"'; \
+	else echo "skip bootstrap.ps1 parse: no pwsh"; fi
 
 test: ## Unit tests (no root, no containers)
 	bash tests/test_setup.sh
 	bash tests/test_repo.sh --self-test
 	bash tests/test_repo.sh
+	bash tests/test_bootstrap.sh
 
 test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash)
 	docker run --rm --user 1000 -e HOME=/tmp/h -v "$(CURDIR):/src:ro" bash:3.2 \

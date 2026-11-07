@@ -1,27 +1,66 @@
 # install
 
-Bootstrap a new Linux or macOS machine. One script installs the basic packages and
-copies the base configs. Configs come from the
-[dotfiles](../dotfiles) repo.
+Bootstrap a new Linux, macOS or Windows machine. On Linux and macOS,
+`setup.sh` installs the basic packages and copies the base configs (configs come
+from the [dotfiles](../dotfiles) repo). On Windows, `bootstrap.ps1` installs
+Scoop and the Windows apps from `catalog.txt`.
 
 ## Quick start
 
-One line, no git needed (downloads the repo to `~/install` and runs it):
+Each script downloads this repo to `~/install` and runs the installer. If
+`~/install` already exists, it is moved to `~/install.bak.<timestamp>` first.
+A git clone there is pulled instead (Linux and macOS only).
+
+### Linux and macOS
+
+Paste into a terminal (bash or zsh):
 
 ```sh
-mkdir -p ~/install && curl -fsSL https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+curl -fsSL https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | sh
 ```
 
-No curl (minimal Debian/Ubuntu)? Use wget:
+No curl (minimal Debian/Ubuntu)? Use `wget -qO- <same URL> | sh`. To pass
+`setup.sh` options, set `SETUP_ARGS`:
 
 ```sh
-mkdir -p ~/install && wget -qO- https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+curl -fsSL https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | SETUP_ARGS="--yes" sh
 ```
 
-Add options at the end, for example `... && ~/install/setup.sh --yes`.
-The curl line also works on macOS (curl and tar are built in).
+You can also paste the whole of [`bootstrap.sh`](bootstrap.sh) into a terminal.
+It runs in a subshell, so it can't close your shell.
 
-Or clone it:
+### Windows
+
+Paste into a normal PowerShell window, not one run as Administrator (Scoop
+refuses elevated installs):
+
+```powershell
+irm https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
+```
+
+You can also paste the whole of [`bootstrap.ps1`](bootstrap.ps1) into PowerShell.
+See [Windows](#windows) for what it does and its options.
+
+### Private repo
+
+While the repo is private, the one-liners need a GitHub token with read access
+to it:
+
+```sh
+export GITHUB_TOKEN=<token>
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | sh
+```
+
+```powershell
+$env:GITHUB_TOKEN = '<token>'
+irm -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
+```
+
+To download the repo, the scripts use `GITHUB_TOKEN` if it is set, then
+`gh auth token` if `gh` is logged in. If neither works, they ask for a token
+when the download fails. A pasted copy of the script needs no token to start.
+
+### Clone instead
 
 ```sh
 git clone https://github.com/jturi/install.git ~/repos/install
@@ -30,12 +69,89 @@ cd ~/repos/install
 ./setup.sh --dry-run  # show what would run, change nothing
 ```
 
-Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`,
+Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--no-packages`, `--no-configs`,
 `--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-key`, `--no-ssh-key`,
-`--zsh-default`, `--no-zsh-default`, `-h/--help`.
+`--zsh-default`, `--no-zsh-default`, `--debug`, `--no-log`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
 only. It runs as root without `sudo` when you are root.
+
+## Reruns, logs and safety
+
+Run it as often as you like; a second run changes nothing.
+
+- **Idempotent.** Installed packages are checked first (`pacman -Q`,
+  `dpkg-query`, `rpm -q`, `brew list`). If nothing is missing, the package
+  manager doesn't run at all: no sudo, no network. A config identical to the repo
+  file is left alone, and an existing SSH key, TPM or login shell is kept.
+- **Verbose.** Each step prints a header, and each command that changes the
+  machine is printed (`$ cmd`) before it runs. `--dry-run` prints the same
+  commands without running them. `--debug` traces every shell line (`set -x`).
+  The summary shows each step with its time and `OK`, `WARN` (with the warning
+  text) or `FAILED`.
+- **Logged.** Every real run is copied to
+  `~/.local/bootstrap/logs/setup-<time>.log`, and the newest 20 logs are kept.
+  `--no-log` turns this off. The first line names the version: the git commit,
+  or the commit `bootstrap.sh` downloaded (saved in `.source`).
+- **Failsafe.**
+  - A failed step doesn't stop the next one. The exit code is 1 only if a step
+    failed, so a rerun retries.
+  - If a batch package install fails (apt and dnf fail the whole batch for one
+    bad name), each package is retried alone and the failures are named.
+  - apt waits up to 5 minutes for the dpkg lock, which `unattended-upgrades`
+    holds on a fresh Ubuntu. Package lists are refreshed only when they are
+    older than 6 hours.
+  - Configs are written to a temp file and renamed into place, so an interrupted
+    run never leaves a half-written `.zshrc`. Every changed file is backed up
+    first (`<file>.bak.<time>`, with a counter if one exists).
+  - sudo is checked once before the first step and kept valid until the end, so
+    a long install never stops halfway for a password.
+  - A lock (`~/.local/bootstrap/lock`) stops two runs at once. A lock left by a
+    killed run is taken over.
+  - `sh setup.sh` re-runs itself under bash.
+- **Arch:** packages install with `pacman -Syu --needed`, because Arch doesn't
+  support partial upgrades (`-Sy` alone). So when something is missing, the run
+  also upgrades the system.
+
+## Windows
+
+`bootstrap.ps1` runs on the Windows PowerShell 5.1 that ships with Windows. It:
+
+1. Stops if PowerShell runs as Administrator.
+2. Downloads the repo to `~\install`.
+3. Hands off to `setup.ps1` if the repo has one (the planned menu installer,
+   see `docs/superpowers/specs/`). It doesn't exist yet, so steps 4 to 6 run.
+4. Sets the CurrentUser execution policy to `RemoteSigned` if it is
+   `Undefined`, `Restricted` or `AllSigned`, then installs
+   [Scoop](https://scoop.sh) if it is missing.
+5. Installs `git` with Scoop. Scoop needs it to add buckets.
+6. Installs every `windows` item in `catalog.txt` that is `on` by default
+   (7-Zip, curl, rustup), adding Scoop buckets as needed. `WezTerm` also
+   copies `configs/wezterm/windows.lua` to `~\.wezterm.lua`, backing up a
+   different file first. Steps that need `setup.ps1` (PowerShell profile,
+   VS Code, Flameshot, hotkeys, WSL) print a warning and are skipped.
+
+Reruns are safe. An installed Scoop app shows `SKIP`, an unchanged
+`.wezterm.lua` is left alone, and a failed `scoop` command is retried once. A
+failed item doesn't stop the rest. The run ends with an
+`OK`/`SKIP`/`WARN`/`FAILED` summary, and a log goes to
+`~\.local\bootstrap\logs\bootstrap-<time>.log`.
+
+Options are environment variables, set before running the script:
+
+| Variable | Does |
+|----------|------|
+| `INSTALL_ITEMS` | Comma list of extra catalog items, e.g. `wezterm,vlc`. `-rustup` drops a default. `all` selects every Windows item |
+| `INSTALL_DRYRUN` | `1`: download only, print the Scoop commands |
+| `INSTALL_DIR` | Where the repo goes (default `~\install`) |
+| `GITHUB_TOKEN` | Token for the private repo |
+
+```powershell
+$env:INSTALL_ITEMS = 'wezterm,vlc,greenshot'
+irm https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
+```
+
+`bootstrap.sh` takes `INSTALL_DIR`, `SETUP_ARGS` and `GITHUB_TOKEN` the same way.
 
 ## Supported distros
 
@@ -203,13 +319,27 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make ssh-key` | create an ed25519 key if none exists |
 | `make ssh-server` | install and enable the OpenSSH server |
 | `make zsh-default` | make zsh the login shell |
-| `make lint` | shellcheck |
-| `make test` | unit tests: distro detection, name mapping, configs, aliases |
+| `make lint` | shellcheck, plus a `bootstrap.ps1` parse check when `pwsh` exists |
+| `make test` | unit tests: distro detection, name mapping, configs, aliases, repo guard, `bootstrap.sh` |
 | `make check` | lint + test |
 | `make test-bash32` | unit tests + macOS dry-run under bash 3.2 |
-| `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers |
+| `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers, then a rerun that must change nothing |
 | `make test-all` | every test above |
 | `make sync-dotfiles` | refresh `tmux.conf` and `zshrc` from the dotfiles repo |
+
+## CI
+
+`.github/workflows/ci.yml` runs only when started by hand: Actions tab >
+ci > Run workflow, or `gh workflow run ci.yml --ref <branch>`. It runs:
+
+- `make check`
+- bash 3.2
+- the six-distro Docker matrix, each with a rerun check
+- a real install plus a no-op rerun on macOS with the system bash
+- a parse check and a dry run of `bootstrap.ps1` on Windows PowerShell 5.1.
+  Runners are elevated, so CI sets `INSTALL_ALLOW_ADMIN=1`.
+
+On a private repo, macOS minutes count 10x against the Actions quota.
 
 ## Sync configs from dotfiles
 
