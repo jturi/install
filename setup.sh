@@ -13,7 +13,9 @@
 # Usage: ./setup.sh [--dry-run] [--yes] [--select] [--config FILE]
 #                   [--no-packages] [--no-configs] [--ssh-server]
 #                   [--terminal | --no-terminal] [--ssh-key | --no-ssh-key]
-#                   [--zsh-default | --no-zsh-default]
+#                   [--zsh-default | --no-zsh-default] [--debug] [--no-log]
+# Started as `sh setup.sh`? Rerun under bash before any bash-only syntax.
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +38,11 @@ SELECT_ONLY=0
 CONFIG_FILE=""
 CONFIG_EXPLICIT=0
 FLAGS_USED=0 # a selection flag was passed: use it instead of the menu
-STEP_LABELS=() STEP_STATUS=()
+DEBUG=0
+LOGGING=1
+STEP_LABELS=() STEP_STATUS=() STEP_TIME=()
+STEP_WARN_FILE="" RUN_DIR="" LOCK_DIR="" LOG_FILE="" SUDO_KEEPALIVE="" TEE_PID=""
+KEEP_LOGS=20
 
 # catalog item : config source (relative to configs/) : target (relative to $TARGET_HOME)
 CONFIG_MAP=(
@@ -51,14 +57,18 @@ source "${SCRIPT_DIR}/lib/catalog.sh"
 source "${SCRIPT_DIR}/lib/menu.sh"
 
 if [[ -t 1 ]]; then
-  C_BLUE=$'\e[34m' C_YELLOW=$'\e[33m' C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_RESET=$'\e[0m'
+  C_BLUE=$'\e[34m' C_YELLOW=$'\e[33m' C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_DIM=$'\e[2m' C_RESET=$'\e[0m'
 else
-  C_BLUE="" C_YELLOW="" C_RED="" C_GREEN="" C_RESET=""
+  C_BLUE="" C_YELLOW="" C_RED="" C_GREEN="" C_DIM="" C_RESET=""
 fi
 
 info() { printf '%s==>%s %s\n' "${C_BLUE}" "${C_RESET}" "$*"; }
 ok() { printf '%s ok%s %s\n' "${C_GREEN}" "${C_RESET}" "$*"; }
-warn() { printf '%swarn%s %s\n' "${C_YELLOW}" "${C_RESET}" "$*" >&2; }
+# Warnings inside a step are also collected for the summary.
+warn() {
+  printf '%swarn%s %s\n' "${C_YELLOW}" "${C_RESET}" "$*" >&2
+  [[ -z "${STEP_WARN_FILE}" ]] || printf '%s\n' "$*" >>"${STEP_WARN_FILE}" 2>/dev/null || true
+}
 die() {
   printf '%serror%s %s\n' "${C_RED}" "${C_RESET}" "$*" >&2
   exit 1
@@ -86,6 +96,14 @@ These change one run, skip the menu, and are never saved:
       --no-zsh-default  Keep the current login shell
       --terminal     Install every terminal for this platform and its config
       --no-terminal  Skip all terminals
+
+Output:
+      --debug        Trace every shell command (set -x)
+      --no-log       Do not write ~/.local/bootstrap/logs/setup-<time>.log
+
+Every command that changes the machine is printed before it runs.
+Reruns are safe: installed packages, identical configs and existing keys
+are skipped, and every changed file is backed up first.
 EOF
 }
 
@@ -95,6 +113,7 @@ run() {
     printf '   [dry-run] %s\n' "$*"
     return 0
   fi
+  printf '   %s$ %s%s\n' "${C_DIM}" "$*" "${C_RESET}"
   "$@"
 }
 
@@ -257,9 +276,14 @@ print_plan() {
 
 # Run one step in a subshell, so `set -e` works inside it and a failure does not
 # stop the next step. Subshells lose environment changes: see ensure_brew in main.
+# A step that warned shows WARN in the summary; only FAILED makes the run fail.
 run_step() {
-  local title="$1" rc=0
+  local title="$1" rc=0 start="${SECONDS}" n="${#STEP_LABELS[@]}"
   shift
+  [[ -n "${RUN_DIR}" ]] || RUN_DIR="$(mktemp -d)"
+  info "Step $((n + 1)): ${title}"
+  STEP_WARN_FILE="${RUN_DIR}/warn.${n}"
+  : >"${STEP_WARN_FILE}"
   set +e
   (
     set -e
@@ -267,18 +291,33 @@ run_step() {
   )
   rc=$?
   set -e
+  STEP_WARN_FILE=""
   STEP_LABELS+=("${title}")
-  if ((rc == 0)); then STEP_STATUS+=("OK"); else STEP_STATUS+=("FAILED"); fi
+  STEP_TIME+=("$((SECONDS - start))s")
+  if ((rc != 0)); then
+    STEP_STATUS+=("FAILED")
+  elif [[ -s "${RUN_DIR}/warn.${n}" ]]; then
+    STEP_STATUS+=("WARN")
+  else
+    STEP_STATUS+=("OK")
+  fi
 }
 
-# Print the result of every step. Returns 1 if any failed.
+# Print the result of every step, with its warnings. Returns 1 if any failed.
 print_summary() {
-  local i failed=0
+  local i failed=0 color line
   info "Summary"
   for ((i = 0; i < ${#STEP_LABELS[@]}; i++)); do
-    printf '  %-7s %s\n' "${STEP_STATUS[i]}" "${STEP_LABELS[i]}"
-    [[ "${STEP_STATUS[i]}" == "OK" ]] || failed=1
+    case "${STEP_STATUS[i]}" in
+      OK) color="${C_GREEN}" ;;
+      WARN) color="${C_YELLOW}" ;;
+      *) color="${C_RED}" failed=1 ;;
+    esac
+    printf '  %s%-7s%s %5s  %s\n' "${color}" "${STEP_STATUS[i]}" "${C_RESET}" "${STEP_TIME[i]}" "${STEP_LABELS[i]}"
+    [[ -s "${RUN_DIR}/warn.${i}" ]] || continue
+    while IFS= read -r line; do printf '                 - %s\n' "${line}"; done <"${RUN_DIR}/warn.${i}"
   done
+  [[ -z "${LOG_FILE}" ]] || printf '  Log: %s\n' "${LOG_FILE}"
   return "${failed}"
 }
 
@@ -291,6 +330,75 @@ is_root() {
 skip_installed_variant() {
   local pkg="$1"
   [[ "${pkg}" == "curl" ]] && rpm -q curl-minimal >/dev/null 2>&1
+}
+
+# True when the distro package is already installed. Read-only, so dry-run
+# shows the real plan. macOS reads BREW_INSTALLED, filled by install_packages.
+# shellcheck disable=SC2016 # ${Status} is a dpkg-query format, not a shell variable
+pkg_installed() {
+  local family="$1" pkg="$2"
+  case "${family}" in
+    arch) pacman -Q "${pkg}" >/dev/null 2>&1 ;;
+    debian) [[ "$(dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null)" == "install ok installed" ]] ;;
+    fedora | rhel) rpm -q --whatprovides "${pkg}" >/dev/null 2>&1 ;;
+    macos) [[ " ${BREW_INSTALLED:-} " == *" ${pkg} "* ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# apt: refresh the package lists unless they are under 6 hours old. Wait up to
+# 5 minutes for the dpkg lock (unattended-upgrades holds it on a fresh Ubuntu).
+APT_GET=(env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300)
+apt_refresh() {
+  if [[ -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -360 2>/dev/null | head -n 1)" ]]; then
+    ok "apt package lists are fresh (under 6h old)"
+    return 0
+  fi
+  as_root "${APT_GET[@]}" update
+}
+
+# Install distro packages in one transaction. Arch uses -Syu: a plain -Sy is a
+# partial upgrade, which Arch does not support.
+pkg_install() {
+  local family="$1"
+  shift
+  case "${family}" in
+    arch) as_root pacman -Syu --needed --noconfirm "$@" ;;
+    debian) apt_refresh && as_root "${APT_GET[@]}" install -y "$@" ;;
+    fedora) as_root dnf install -y "$@" ;;
+    rhel)
+      local pm=dnf
+      command -v dnf >/dev/null 2>&1 || pm=yum
+      enable_epel "${pm}"
+      as_root "${pm}" install -y "$@"
+      ;;
+    macos) run brew install "$@" ;;
+    *) die "no installer for family '${family}'" ;;
+  esac
+}
+
+# Install what is missing. If the batch fails (one bad name fails a whole apt or
+# dnf transaction), retry one by one so the rest still installs.
+install_missing() {
+  local family="$1" pkg
+  shift
+  local -a todo=() present=() failed=()
+  for pkg in "$@"; do
+    if pkg_installed "${family}" "${pkg}"; then present+=("${pkg}"); else todo+=("${pkg}"); fi
+  done
+  ((${#present[@]} == 0)) || ok "already installed: ${present[*]}"
+  if ((${#todo[@]} == 0)); then
+    ok "nothing to install"
+    return 0
+  fi
+  info "Installing (${family}): ${todo[*]}"
+  pkg_install "${family}" "${todo[@]}" && return 0
+  ((${#todo[@]} > 1)) || return 1
+  warn "batch install failed; retrying one package at a time"
+  for pkg in "${todo[@]}"; do
+    pkg_install "${family}" "${pkg}" || failed+=("${pkg}")
+  done
+  ((${#failed[@]} == 0)) || { warn "could not install: ${failed[*]}"; return 1; }
 }
 
 install_packages() {
@@ -314,31 +422,11 @@ install_packages() {
     pkgs=(${kept[@]+"${kept[@]}"})
   fi
   ((${#pkgs[@]})) || { warn "no packages selected"; return 0; }
-  info "Installing (${family}): ${pkgs[*]}"
-
-  case "${family}" in
-    arch)
-      as_root pacman -Sy --needed --noconfirm "${pkgs[@]}"
-      ;;
-    debian)
-      as_root env DEBIAN_FRONTEND=noninteractive apt-get update
-      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}"
-      ;;
-    fedora)
-      as_root dnf install -y "${pkgs[@]}"
-      ;;
-    rhel)
-      local pm=dnf
-      command -v dnf >/dev/null 2>&1 || pm=yum
-      enable_epel "${pm}"
-      as_root "${pm}" install -y "${pkgs[@]}"
-      ;;
-    macos)
-      ensure_brew
-      run brew install "${pkgs[@]}"
-      ;;
-    *) die "no installer for family '${family}'" ;;
-  esac
+  if [[ "${family}" == "macos" ]]; then
+    ensure_brew
+    if command -v brew >/dev/null 2>&1; then BREW_INSTALLED="$(brew list --formula -1 2>/dev/null | xargs)"; fi
+  fi
+  install_missing "${family}" "${pkgs[@]}"
 }
 
 # Print the Homebrew prefix: from brew if on PATH, else the default location.
@@ -358,8 +446,11 @@ ensure_brew() {
   local brew_bin
   brew_bin="$(brew_prefix)/bin/brew"
   if ! command -v brew >/dev/null 2>&1 && [[ ! -x "${brew_bin}" ]]; then
+    # Dry-run: print once; later calls (in step subshells) inherit the flag.
+    if ((DRY_RUN)) && [[ -n "${BREW_DRY_SHOWN:-}" ]]; then return 0; fi
     info "Installing Homebrew (official installer, asks for your password)"
     if ((DRY_RUN)); then
+      BREW_DRY_SHOWN=1
       # shellcheck disable=SC2016  # print the command, do not run it
       printf '   [dry-run] %s\n' '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
       return 0
@@ -427,6 +518,8 @@ backup_file() {
   local file="$1" backup
   [[ -e "${file}" || -L "${file}" ]] || return 0
   backup="${file}.bak.$(date +%Y%m%d_%H%M%S)"
+  local base="${backup}" n=0
+  while [[ -e "${backup}" ]]; do n=$((n + 1)); backup="${base}.${n}"; done
   info "Backing up ${file} -> ${backup}"
   run cp -P "${file}" "${backup}"
 }
@@ -440,11 +533,26 @@ install_file() {
     return 0
   fi
   backup_file "${dst}"
-  # Remove a symlink so cp writes a new file, not through the link.
-  [[ -L "${dst}" ]] && run rm -f "${dst}"
   run mkdir -p "$(dirname "${dst}")"
-  run cp "${src}" "${dst}"
+  atomic_copy "${src}" "${dst}"
   ok "${dst}"
+}
+
+# Copy to a temp file next to dst, then rename it over dst: an interrupted run
+# never leaves a half-written config. The rename also replaces a symlink itself
+# instead of writing through it. Optional third argument: chmod mode.
+atomic_copy() {
+  local src="$1" dst="$2" mode="${3:-}" tmp="$2.tmp.$$"
+  if ((DRY_RUN)); then
+    printf '   [dry-run] cp %s %s\n' "${src}" "${dst}"
+    return 0
+  fi
+  printf '   %s$ cp %s %s%s\n' "${C_DIM}" "${src}" "${dst}" "${C_RESET}"
+  if cp "${src}" "${tmp}" && { [[ -z "${mode}" ]] || chmod "${mode}" "${tmp}"; } && mv -f "${tmp}" "${dst}"; then
+    return 0
+  fi
+  rm -f "${tmp}"
+  die "could not write ${dst}"
 }
 
 # Install kitty and Ghostty configs. Each terminal has one file per platform
@@ -474,32 +582,25 @@ install_terminal_packages() {
   local family="$1"
   shift
   case "${family}" in
-    arch)
-      as_root pacman -Sy --needed --noconfirm "$@" || \
-        warn "$* install failed (pacman)"
-      ;;
     debian)
       if [[ " $* " == *" kitty "* ]]; then
-        as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y kitty || \
-          warn "kitty install failed (apt)"
+        install_missing debian kitty || warn "kitty install failed (apt)"
       fi
       [[ " $* " != *" ghostty "* ]] ||
         warn "Ghostty has no apt package; install it from https://ghostty.org/download"
       ;;
-    fedora)
-      as_root dnf install -y "$@" || \
-        warn "$* install failed (dnf)"
-      ;;
-    rhel)
-      local pm=dnf
-      command -v dnf >/dev/null 2>&1 || pm=yum
-      as_root "${pm}" install -y "$@" || \
-        warn "$* install failed (${pm}; Ghostty may need a manual install from https://ghostty.org/download)"
+    arch | fedora | rhel)
+      install_missing "${family}" "$@" ||
+        warn "$* install failed; Ghostty may need a manual install from https://ghostty.org/download"
       ;;
     macos)
       ensure_brew
-      run brew install --cask "$@" || \
-        warn "$* install failed (brew)"
+      local cask casks="" todo=()
+      if command -v brew >/dev/null 2>&1; then casks=" $(brew list --cask -1 2>/dev/null | xargs) "; fi
+      for cask in "$@"; do
+        if [[ "${casks}" == *" ${cask} "* ]]; then ok "${cask} (already installed)"; else todo+=("${cask}"); fi
+      done
+      ((${#todo[@]} == 0)) || run brew install --cask "${todo[@]}" || warn "${todo[*]} install failed (brew)"
       ;;
     *) die "no installer for family '${family}'" ;;
   esac
@@ -589,19 +690,14 @@ install_bin_scripts() {
     [[ -f "${f}" ]] || continue
     base="$(basename "${f}")"
     run mkdir -p "${bindir}"
-    if [[ -f "${bindir}/${base}" ]] && cmp -s "${f}" "${bindir}/${base}" \
+    if [[ -f "${bindir}/${base}" ]] && files_equal "${f}" "${bindir}/${base}" \
       && [[ -x "${bindir}/${base}" ]]; then
       ok "${bindir}/${base} (unchanged)"
       continue
     fi
     backup_file "${bindir}/${base}"
     info "Installing ${bindir}/${base}"
-    if ((DRY_RUN)); then
-      printf '   [dry-run] install %s -> %s\n' "${f}" "${bindir}/${base}"
-    else
-      cp "${f}" "${bindir}/${base}"
-      chmod +x "${bindir}/${base}"
-    fi
+    atomic_copy "${f}" "${bindir}/${base}" 755
     ok "${bindir}/${base}"
   done
 }
@@ -700,7 +796,7 @@ install_tpm() {
   fi
   if ((!DRY_RUN)) && [[ -x "${tpm_dir}/bin/install_plugins" ]] && command -v tmux >/dev/null 2>&1; then
     info "Installing tmux plugins"
-    "${tpm_dir}/bin/install_plugins" >/dev/null 2>&1 ||
+    "${tpm_dir}/bin/install_plugins" 2>&1 | sed 's/^/   /' ||
       warn "TPM plugin install failed; press Prefix + I inside tmux"
   fi
 }
@@ -818,6 +914,8 @@ parse_args() {
       --no-zsh-default) ZSH_DEFAULT_MODE=skip FLAGS_USED=1 ;;
       --terminal) TERMINAL_MODE=install FLAGS_USED=1 ;;
       --no-terminal) TERMINAL_MODE=skip FLAGS_USED=1 ;;
+      --debug) DEBUG=1 ;;
+      --no-log) LOGGING=0 ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -851,10 +949,106 @@ run_steps() {
   if action_selected step:zsh-login; then run_step "zsh login shell" setup_zsh_default; fi
 }
 
+# Print where this copy of the repo came from: git commit, or the .source file
+# that bootstrap.sh writes.
+source_version() {
+  if [[ -d "${SCRIPT_DIR}/.git" ]] && command -v git >/dev/null 2>&1 &&
+    git -C "${SCRIPT_DIR}" describe --always --dirty 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f "${SCRIPT_DIR}/.source" ]]; then head -n 1 "${SCRIPT_DIR}/.source"; else echo "unknown version"; fi
+}
+
+# True when a ticked step needs root (sudo), so the password is asked once up front.
+needs_root() {
+  local family="$1"
+  item_selected extras.ssh-server && return 0
+  [[ "${family}" != "macos" ]] || return 1
+  action_selected pkg || action_selected step:terminals || action_selected step:zsh-login
+}
+
+# Ask for the sudo password before the first step and keep it valid until the
+# run ends, so a long install never stops halfway for a password.
+prime_sudo() {
+  ((!DRY_RUN)) || return 0
+  ! is_root || return 0
+  needs_root "$1" || return 0
+  command -v sudo >/dev/null 2>&1 || return 0
+  [[ -t 0 ]] || return 0
+  info "Some steps need root: checking sudo once now"
+  sudo -v || die "sudo failed; nothing installed"
+  (while kill -0 "$$" 2>/dev/null; do
+    sudo -n true 2>/dev/null
+    sleep 50
+  done) >/dev/null 2>&1 &
+  SUDO_KEEPALIVE=$!
+}
+
+# One run at a time: a lock dir holding the owner's pid. A lock whose pid is
+# gone (killed run, reboot) is taken over.
+take_lock() {
+  LOCK_DIR="$1"
+  mkdir -p "$(dirname "${LOCK_DIR}")"
+  if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+    local pid
+    pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      LOCK_DIR=""
+      die "another setup.sh is running (pid ${pid})"
+    fi
+    warn "removing a stale lock left by pid ${pid:-unknown}"
+    rm -rf "${LOCK_DIR}"
+    mkdir "${LOCK_DIR}" || { LOCK_DIR=""; die "cannot create lock ${LOCK_DIR}"; }
+  fi
+  printf '%s\n' "$$" >"${LOCK_DIR}/pid"
+}
+
+# Copy all output to a log file and keep the newest KEEP_LOGS logs.
+start_log() {
+  local dir="$1" old
+  mkdir -p "${dir}" || { warn "cannot create ${dir}; not logging"; return 0; }
+  # Prune first, keeping KEEP_LOGS - 1 old logs, so the new log is never a
+  # candidate. Names hold the time, so a name sort is a time sort. Best effort.
+  # shellcheck disable=SC2012 # names are ours: setup-<digits>_<digits>.log
+  { ls -1r "${dir}"/setup-*.log 2>/dev/null | tail -n +"${KEEP_LOGS}" | while IFS= read -r old; do
+    rm -f "${old}"
+  done; } || true
+  LOG_FILE="${dir}/setup-$(date +%Y%m%d_%H%M%S).log"
+  : >>"${LOG_FILE}" || { warn "cannot write ${LOG_FILE}; not logging"; LOG_FILE=""; return 0; }
+  exec > >(tee -a "${LOG_FILE}") 2>&1
+  TEE_PID=$!
+}
+
+cleanup() {
+  [[ -z "${SUDO_KEEPALIVE}" ]] || kill "${SUDO_KEEPALIVE}" 2>/dev/null || true
+  [[ -z "${LOCK_DIR}" ]] || rm -rf "${LOCK_DIR}"
+  [[ -z "${RUN_DIR}" ]] || rm -rf "${RUN_DIR}"
+  if [[ -n "${TEE_PID}" ]]; then
+    # Let tee flush the last lines before the prompt comes back.
+    exec 1>&- 2>&-
+    wait "${TEE_PID}" 2>/dev/null || true
+  fi
+}
+
+# Lock, log and sudo for a real install run.
+start_run() {
+  local family="$1" state="${TARGET_HOME}/.local/bootstrap"
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  ((!DRY_RUN)) || return 0
+  take_lock "${state}/lock"
+  ((!LOGGING)) || start_log "${state}/logs"
+  [[ -z "${LOG_FILE}" ]] || info "Logging to ${LOG_FILE}"
+  prime_sudo "${family}"
+}
+
 main() {
   parse_args "$@"
+  ((!DEBUG)) || set -x
   local family menu=0
   family="$(detect_family)"
+  info "install $(source_version), bash ${BASH_VERSION}"
   info "Detected distro family: ${family}"
   load_catalog "${family}"
 
@@ -884,6 +1078,7 @@ main() {
     return 0
   fi
 
+  start_run "${family}"
   run_steps "${family}"
   print_summary || die "some steps failed; rerun to retry"
   info "Done."
