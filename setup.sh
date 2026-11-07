@@ -10,15 +10,17 @@
 #
 # Works with the bash 3.2 that ships with macOS.
 #
-# Usage: ./setup.sh [--dry-run] [--yes] [--no-packages] [--no-configs]
-#                   [--ssh-server] [--terminal | --no-terminal]
-#                   [--ssh-key | --no-ssh-key] [--zsh-default | --no-zsh-default]
+# Usage: ./setup.sh [--dry-run] [--yes] [--select] [--config FILE]
+#                   [--no-packages] [--no-configs] [--ssh-server]
+#                   [--terminal | --no-terminal] [--ssh-key | --no-ssh-key]
+#                   [--zsh-default | --no-zsh-default]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 UNAME_S="${UNAME_S:-$(uname -s)}"
-PACKAGE_LIST="${PACKAGE_LIST:-${SCRIPT_DIR}/packages/base.txt}"
+KERNEL_RELEASE_FILE="${KERNEL_RELEASE_FILE:-/proc/sys/kernel/osrelease}"
+CATALOG_FILE="${CATALOG_FILE:-${SCRIPT_DIR}/catalog.txt}"
 TARGET_HOME="${TARGET_HOME:-${HOME}}"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
 
@@ -27,16 +29,26 @@ ASSUME_YES=0
 DO_PACKAGES=1
 DO_CONFIGS=1
 DO_SSH_SERVER=0
-SSH_KEY_MODE=ask # ask | create | skip
-ZSH_DEFAULT_MODE=ask # ask | change | skip
-TERMINAL_MODE=ask # ask | install | skip
+SSH_KEY_MODE=saved # saved | create | skip
+ZSH_DEFAULT_MODE=saved # saved | change | skip
+TERMINAL_MODE=saved # saved | install | skip
+SELECT_ONLY=0
+CONFIG_FILE=""
+CONFIG_EXPLICIT=0
+FLAGS_USED=0 # a selection flag was passed: use it instead of the menu
+STEP_LABELS=() STEP_STATUS=()
 
-# config source (relative to configs/) -> target (relative to $TARGET_HOME)
+# catalog item : config source (relative to configs/) : target (relative to $TARGET_HOME)
 CONFIG_MAP=(
-  "tmux.conf:.tmux.conf"
-  "nanorc:.nanorc"
-  "zshrc:.zshrc"
+  "tmux:tmux.conf:.tmux.conf"
+  "nanorc:nanorc:.nanorc"
+  "zshrc:zshrc:.zshrc"
 )
+
+# shellcheck source=lib/catalog.sh
+source "${SCRIPT_DIR}/lib/catalog.sh"
+# shellcheck source=lib/menu.sh
+source "${SCRIPT_DIR}/lib/menu.sh"
 
 if [[ -t 1 ]]; then
   C_BLUE=$'\e[34m' C_YELLOW=$'\e[33m' C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_RESET=$'\e[0m'
@@ -53,23 +65,27 @@ die() {
 }
 
 usage() {
-  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
-  -n, --dry-run      Print what would run, change nothing
-  -y, --yes          Do not ask for confirmation
-      --no-packages  Skip package installation
-      --no-configs   Skip config files
+  -n, --dry-run      Print the plan, change nothing
+  -y, --yes          No menu or prompts: use the saved selection, else defaults
+      --select       Show the menu and save the selection; install nothing
+      --config FILE  Use FILE instead of ~/.local/bootstrap/config
+  -h, --help         Show this help
+
+These change one run, skip the menu, and are never saved:
+      --no-packages  Skip packages and the OpenSSH server
+      --no-configs   Skip config files and tmux plugins
       --ssh-server   Also install OpenSSH server and enable sshd
                      (macOS: turn on Remote Login)
-      --ssh-key      Create an ed25519 SSH key if none exists (no prompt)
+      --ssh-key      Create an ed25519 SSH key if none exists
       --no-ssh-key   Do not check for an SSH key
-      --zsh-default  Make zsh the login shell (no prompt)
+      --zsh-default  Make zsh the login shell
       --no-zsh-default  Keep the current login shell
-      --terminal     Install kitty + Ghostty packages and configs (no prompt)
-      --no-terminal  Skip kitty + Ghostty (no prompt)
-  -h, --help         Show this help
+      --terminal     Install every terminal for this platform and its config
+      --no-terminal  Skip all terminals
 EOF
 }
 
@@ -153,15 +169,121 @@ pkg_name() {
   esac
 }
 
-# Read the package list, skipping comments and blank lines.
-read_packages() {
-  local family="$1" line
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line%%#*}"
-    line="${line//[[:space:]]/}"
-    [[ -n "${line}" ]] || continue
-    pkg_name "${family}" "${line}"
-  done <"${PACKAGE_LIST}"
+# Load the catalog items for this machine.
+load_catalog() {
+  local family="$1" platform=linux wsl=0
+  [[ "${family}" == "macos" ]] && platform=macos
+  is_wsl && wsl=1
+  catalog_load "${CATALOG_FILE}" "${platform}" "${wsl}"
+  catalog_hide_unmapped "${family}"
+}
+
+# Print the distro package name of every ticked pkg item.
+selected_packages() {
+  local family="$1" i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_ACTION[i]}" == "pkg" && "${CAT_SEL[i]}" == "1" ]] || continue
+    pkg_name "${family}" "${CAT_ITEM[i]}"
+  done
+}
+
+# True when the item <group>.<item> is ticked.
+item_selected() {
+  local key="$1" i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    if [[ "${CAT_GROUP[i]}.${CAT_ITEM[i]}" == "${key}" ]]; then
+      [[ "${CAT_SEL[i]}" == "1" ]]
+      return
+    fi
+  done
+  return 1
+}
+
+# Tick or clear one item. Keys not on this platform are ignored.
+set_selection() {
+  local key="$1" value="$2" i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    if [[ "${CAT_GROUP[i]}.${CAT_ITEM[i]}" == "${key}" ]]; then CAT_SEL[i]="${value}"; fi
+  done
+}
+
+# True when any item with this exact action is ticked.
+action_selected() {
+  local wanted="$1" i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_ACTION[i]}" == "${wanted}" && "${CAT_SEL[i]}" == "1" ]] && return 0
+  done
+  return 1
+}
+
+# Apply this run's flags on top of the selection. Never saved.
+apply_flag_overrides() {
+  local i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    if ((!DO_PACKAGES)) && [[ "${CAT_ACTION[i]}" == "pkg" ]]; then CAT_SEL[i]=0; fi
+    if ((!DO_CONFIGS)) && [[ "${CAT_ACTION[i]}" == "step:configs" || "${CAT_ACTION[i]}" == "step:tpm" ]]; then CAT_SEL[i]=0; fi
+    if [[ "${CAT_GROUP[i]}" == "terminals" ]]; then
+      [[ "${TERMINAL_MODE}" != "install" ]] || CAT_SEL[i]=1
+      [[ "${TERMINAL_MODE}" != "skip" ]] || CAT_SEL[i]=0
+    fi
+  done
+  ((!DO_SSH_SERVER)) || set_selection extras.ssh-server 1
+  # The server is a package: --no-packages always did skip it.
+  ((DO_PACKAGES)) || set_selection extras.ssh-server 0
+  [[ "${SSH_KEY_MODE}" != "create" ]] || set_selection extras.ssh-key 1
+  [[ "${SSH_KEY_MODE}" != "skip" ]] || set_selection extras.ssh-key 0
+  [[ "${ZSH_DEFAULT_MODE}" != "change" ]] || set_selection extras.zsh-login 1
+  [[ "${ZSH_DEFAULT_MODE}" != "skip" ]] || set_selection extras.zsh-login 0
+}
+
+# Print what this run will do, one group per line.
+print_plan() {
+  local group i install skip
+  info "Plan"
+  while IFS= read -r group; do
+    install="" skip=""
+    for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+      [[ "${CAT_GROUP[i]}" == "${group}" ]] || continue
+      if [[ "${CAT_SEL[i]}" == "1" ]]; then
+        install="${install}${install:+, }${CAT_LABEL[i]}"
+      else
+        skip="${skip}${skip:+, }${CAT_LABEL[i]}"
+      fi
+    done
+    [[ -z "${install}" ]] || printf '  install %-13s %s\n' "${group}" "${install}"
+    [[ -z "${skip}" ]] || printf '  skip    %-13s %s\n' "${group}" "${skip}"
+  done < <(catalog_groups)
+}
+
+# Run one step in a subshell, so `set -e` works inside it and a failure does not
+# stop the next step. Subshells lose environment changes: see ensure_brew in main.
+run_step() {
+  local title="$1" rc=0
+  shift
+  set +e
+  (
+    set -e
+    "$@"
+  )
+  rc=$?
+  set -e
+  STEP_LABELS+=("${title}")
+  if ((rc == 0)); then STEP_STATUS+=("OK"); else STEP_STATUS+=("FAILED"); fi
+}
+
+# Print the result of every step. Returns 1 if any failed.
+print_summary() {
+  local i failed=0
+  info "Summary"
+  for ((i = 0; i < ${#STEP_LABELS[@]}; i++)); do
+    printf '  %-7s %s\n' "${STEP_STATUS[i]}" "${STEP_LABELS[i]}"
+    [[ "${STEP_STATUS[i]}" == "OK" ]] || failed=1
+  done
+  return "${failed}"
+}
+
+is_root() {
+  [[ "${EUID}" -eq 0 ]]
 }
 
 # RHEL/Fedora images ship curl-minimal, which conflicts with the curl package.
@@ -178,11 +300,11 @@ install_packages() {
   # while-read instead of mapfile: macOS bash 3.2 has no mapfile.
   while IFS= read -r pkg; do
     pkgs+=("${pkg}")
-  done < <(read_packages "${family}")
-  if ((DO_SSH_SERVER)); then
+  done < <(selected_packages "${family}")
+  if item_selected extras.ssh-server; then
     pkg="$(pkg_name "${family}" openssh-server)"
     # On Arch the client package already includes the server.
-    [[ -n "${pkg}" && " ${pkgs[*]} " != *" ${pkg} "* ]] && pkgs+=("${pkg}")
+    [[ -n "${pkg}" && " ${pkgs[*]-} " != *" ${pkg} "* ]] && pkgs+=("${pkg}")
   fi
   if [[ "${family}" == "fedora" || "${family}" == "rhel" ]]; then
     local -a kept=()
@@ -191,7 +313,7 @@ install_packages() {
     done
     pkgs=(${kept[@]+"${kept[@]}"})
   fi
-  ((${#pkgs[@]})) || { warn "no packages in ${PACKAGE_LIST}"; return 0; }
+  ((${#pkgs[@]})) || { warn "no packages selected"; return 0; }
   info "Installing (${family}): ${pkgs[*]}"
 
   case "${family}" in
@@ -329,80 +451,121 @@ install_file() {
 # (configs/kitty/<os>.conf, configs/ghostty/<os>.config); macOS and Linux
 # (including WSL) get their own. Windows has no native kitty or Ghostty build.
 install_terminal_configs() {
-  local family="$1" os=linux ghostty_dst
+  local family="$1" os=linux ghostty_dst item
+  shift
   [[ "${family}" == "macos" ]] && os=macos
   if [[ "${os}" == "macos" ]]; then
     ghostty_dst="${TARGET_HOME}/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
   else
     ghostty_dst="${TARGET_HOME}/.config/ghostty/config"
   fi
-  install_file "${SCRIPT_DIR}/configs/kitty/${os}.conf" "${TARGET_HOME}/.config/kitty/kitty.conf"
-  install_file "${SCRIPT_DIR}/configs/ghostty/${os}.config" "${ghostty_dst}"
+  for item in "$@"; do
+    case "${item}" in
+      kitty) install_file "${SCRIPT_DIR}/configs/kitty/${os}.conf" "${TARGET_HOME}/.config/kitty/kitty.conf" ;;
+      ghostty) install_file "${SCRIPT_DIR}/configs/ghostty/${os}.config" "${ghostty_dst}" ;;
+    esac
+  done
 }
 
-# Install the kitty + Ghostty terminal packages (best effort per distro).
-# Ghostty is not packaged everywhere (e.g. Debian/Ubuntu apt); there we
-# install kitty and point at the manual Ghostty install.
+# Install the ticked terminal packages (best effort per distro). Ghostty is not
+# packaged everywhere (e.g. Debian/Ubuntu apt); there we install kitty and point
+# at the manual Ghostty install.
 install_terminal_packages() {
   local family="$1"
+  shift
   case "${family}" in
     arch)
-      as_root pacman -Sy --needed --noconfirm kitty ghostty || \
-        warn "kitty/Ghostty install failed (pacman)"
+      as_root pacman -Sy --needed --noconfirm "$@" || \
+        warn "$* install failed (pacman)"
       ;;
     debian)
-      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y kitty || \
-        warn "kitty install failed (apt)"
-      warn "Ghostty has no apt package; install it from https://ghostty.org/download"
+      if [[ " $* " == *" kitty "* ]]; then
+        as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y kitty || \
+          warn "kitty install failed (apt)"
+      fi
+      [[ " $* " != *" ghostty "* ]] ||
+        warn "Ghostty has no apt package; install it from https://ghostty.org/download"
       ;;
     fedora)
-      as_root dnf install -y kitty ghostty || \
-        warn "kitty/Ghostty install failed (dnf)"
+      as_root dnf install -y "$@" || \
+        warn "$* install failed (dnf)"
       ;;
     rhel)
       local pm=dnf
       command -v dnf >/dev/null 2>&1 || pm=yum
-      as_root "${pm}" install -y kitty ghostty || \
-        warn "kitty/Ghostty install failed (${pm}; Ghostty may need a manual install from https://ghostty.org/download)"
+      as_root "${pm}" install -y "$@" || \
+        warn "$* install failed (${pm}; Ghostty may need a manual install from https://ghostty.org/download)"
       ;;
     macos)
       ensure_brew
-      run brew install --cask kitty ghostty || \
-        warn "kitty/Ghostty install failed (brew)"
+      run brew install --cask "$@" || \
+        warn "$* install failed (brew)"
       ;;
     *) die "no installer for family '${family}'" ;;
   esac
 }
 
-# Offer to install the kitty + Ghostty terminals and their configs.
-# Opt-in: default is No (empty reply skips). No prompt under --terminal /
-# --no-terminal, --yes, --dry-run, or without a terminal; --yes still skips
-# (opt-in stays off) unless --terminal was given.
-setup_terminals() {
-  local family="$1"
-  [[ "${TERMINAL_MODE}" == "skip" ]] && return 0
-  if [[ "${TERMINAL_MODE}" == "ask" ]]; then
-    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
-      info "skipping kitty + Ghostty (rerun with --terminal to install)"
-      return 0
-    fi
-    local reply
-    read -r -p "Install kitty and Ghostty plus their configs? [y/N] " reply
-    [[ "${reply}" =~ ^[Yy]$ ]] || { info "skipping kitty + Ghostty"; return 0; }
+# True under WSL, where Linux can run Windows programs.
+is_wsl() {
+  [[ -r "${KERNEL_RELEASE_FILE}" && "$(<"${KERNEL_RELEASE_FILE}")" == *[Mm]icrosoft* ]]
+}
+
+# Print the Windows user's home as a WSL path. WINDOWS_HOME overrides it.
+windows_home() {
+  if [[ -n "${WINDOWS_HOME:-}" ]]; then
+    printf '%s\n' "${WINDOWS_HOME}"
+    return 0
   fi
-  info "Installing kitty + Ghostty"
-  install_terminal_packages "${family}"
-  install_terminal_configs "${family}"
+  local dir
+  dir="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null)" || return 1
+  dir="${dir%$'\r'}"
+  [[ -n "${dir}" ]] || return 1
+  wslpath "${dir}"
+}
+
+# WSL only: install WezTerm on the Windows side with Scoop and copy its config
+# to the Windows home. WezTerm is in the extras bucket, which a fresh Scoop
+# lacks. If adding it fails, `scoop install` reports that.
+install_windows_terminal() {
+  if command -v scoop >/dev/null 2>&1; then
+    run scoop bucket add extras || true
+    run scoop install wezterm || warn "WezTerm install failed (scoop)"
+  else
+    warn "scoop not found on PATH; install it from https://scoop.sh, then run: scoop bucket add extras; scoop install wezterm"
+  fi
+  local home
+  if home="$(windows_home)"; then
+    install_file "${SCRIPT_DIR}/configs/wezterm/windows.lua" "${home}/.wezterm.lua"
+  else
+    warn "cannot find the Windows home; skipping .wezterm.lua"
+  fi
+}
+
+# Install the ticked terminals and their configs.
+setup_terminals() {
+  local family="$1" item
+  local -a items=()
+  for item in kitty ghostty; do
+    if item_selected "terminals.${item}"; then items+=("${item}"); fi
+  done
+  ((${#items[@]})) || return 0
+  info "Installing terminals: ${items[*]}"
+  install_terminal_packages "${family}" "${items[@]}"
+  install_terminal_configs "${family}" "${items[@]}"
 }
 
 install_configs() {
   local family="${1:-}"
   info "Installing configs into ${TARGET_HOME}"
-  local entry src tmp_dir=""
+  local entry item name src tmp_dir=""
   for entry in "${CONFIG_MAP[@]}"; do
-    src="${SCRIPT_DIR}/configs/${entry%%:*}"
+    item="${entry%%:*}"
+    entry="${entry#*:}"
+    name="${entry%%:*}"
+    item_selected "configs.${item}" || continue
+    src="${SCRIPT_DIR}/configs/${name}"
     # Homebrew nano keeps its syntax files under the brew prefix.
-    if [[ "${family}" == "macos" && "${entry%%:*}" == "nanorc" ]]; then
+    if [[ "${family}" == "macos" && "${name}" == "nanorc" ]]; then
       [[ -n "${tmp_dir}" ]] || tmp_dir="$(mktemp -d)"
       sed "s|/usr/share/nano|$(brew_prefix)/share/nano|" "${src}" >"${tmp_dir}/nanorc"
       src="${tmp_dir}/nanorc"
@@ -410,11 +573,10 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
-  install_aliases
+  if item_selected configs.aliases; then install_aliases; fi
   # Scripts only (no PATH appends here): the loader block and repo .zshrc
   # already export ~/.local/bin, so reruns stay idempotent.
-  install_bin_scripts
-  install_tpm
+  if item_selected configs.bin; then install_bin_scripts; fi
 }
 
 # Install helper scripts (executables) into ~/.local/bin.
@@ -552,29 +714,25 @@ find_ssh_key() {
   return 1
 }
 
-# Offer to create an ed25519 key when the user has none.
+# Create an ed25519 key when the user has none. A saved selection needs a
+# terminal, so ssh-keygen can ask for a passphrase; only --ssh-key may create a
+# key with an empty passphrase.
 setup_ssh_key() {
-  [[ "${SSH_KEY_MODE}" == "skip" ]] && return 0
   local key
   if key="$(find_ssh_key)"; then
     ok "SSH key found: ${key}"
     return 0
   fi
   info "No SSH key found in ${TARGET_HOME}/.ssh"
-  if [[ "${SSH_KEY_MODE}" == "ask" ]]; then
-    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
-      warn "skipped SSH key; rerun with --ssh-key to create one"
-      return 0
-    fi
-    local reply
-    read -r -p "Create an ed25519 SSH key now? [Y/n] " reply
-    [[ -z "${reply}" || "${reply}" =~ ^[Yy] ]] || { warn "skipped SSH key"; return 0; }
+  if [[ "${SSH_KEY_MODE}" != "create" && ! -t 0 ]]; then
+    warn "skipped SSH key: no terminal for a passphrase; rerun with --ssh-key to create one"
+    return 0
   fi
   command -v ssh-keygen >/dev/null 2>&1 || ((DRY_RUN)) ||
     { warn "ssh-keygen not found; install the OpenSSH client first"; return 0; }
 
   key="${TARGET_HOME}/.ssh/id_ed25519"
-  local -a args=(-t ed25519 -f "${key}" -C "${USER:-$(id -un)}@$(hostname 2>/dev/null || uname -n)")
+  local -a args=(-t ed25519 -f "${key}" -C "$(current_user)@$(hostname 2>/dev/null || uname -n)")
   # Without a terminal ssh-keygen cannot ask for a passphrase.
   [[ -t 0 ]] || args+=(-N "")
   run mkdir -p "${TARGET_HOME}/.ssh"
@@ -586,12 +744,18 @@ setup_ssh_key() {
   fi
 }
 
+# Print the user name. Containers can run under a UID with no passwd entry.
+current_user() {
+  id -un 2>/dev/null || printf '%s\n' "${USER:-}"
+}
+
 # Print the login shell of the current user.
 login_shell() {
   local user
-  user="$(id -un)"
+  user="$(current_user)"
   if command -v getent >/dev/null 2>&1; then
-    getent passwd "${user}" | cut -d: -f7
+    # No passwd entry is an unknown shell, not an error (pipefail would abort).
+    getent passwd "${user}" | cut -d: -f7 || true
   elif [[ "${UNAME_S}" == "Darwin" ]]; then
     dscl . -read "/Users/${user}" UserShell | awk '{print $2}'
   else
@@ -599,9 +763,8 @@ login_shell() {
   fi
 }
 
-# Offer to make zsh the login shell.
+# Make zsh the login shell.
 setup_zsh_default() {
-  [[ "${ZSH_DEFAULT_MODE}" == "skip" ]] && return 0
   local zsh_path current
   zsh_path="$(command -v zsh 2>/dev/null || true)"
   if [[ -z "${zsh_path}" ]]; then
@@ -617,20 +780,11 @@ setup_zsh_default() {
     ok "login shell is already zsh (${current})"
     return 0
   fi
-  if [[ "${ZSH_DEFAULT_MODE}" == "ask" ]]; then
-    if ((ASSUME_YES || DRY_RUN)) || [[ ! -t 0 ]]; then
-      info "login shell is ${current:-unknown}; rerun with --zsh-default to switch to zsh"
-      return 0
-    fi
-    local reply
-    read -r -p "Make zsh your login shell (now ${current:-unknown})? [y/N] " reply
-    [[ "${reply}" =~ ^[Yy] ]] || { info "login shell unchanged"; return 0; }
-  fi
   info "Setting login shell to ${zsh_path}"
   if [[ "${UNAME_S}" == "Darwin" ]]; then
     run chsh -s "${zsh_path}"
   else
-    as_root usermod -s "${zsh_path}" "$(id -un)"
+    as_root usermod -s "${zsh_path}" "$(current_user)"
   fi
   ((DRY_RUN)) || ok "login shell set to zsh; log out and back in to use it"
 }
@@ -648,15 +802,22 @@ parse_args() {
     case "$1" in
       -n | --dry-run) DRY_RUN=1 ;;
       -y | --yes) ASSUME_YES=1 ;;
-      --no-packages) DO_PACKAGES=0 ;;
-      --no-configs) DO_CONFIGS=0 ;;
-      --ssh-server) DO_SSH_SERVER=1 ;;
-      --ssh-key) SSH_KEY_MODE=create ;;
-      --no-ssh-key) SSH_KEY_MODE=skip ;;
-      --zsh-default) ZSH_DEFAULT_MODE=change ;;
-      --no-zsh-default) ZSH_DEFAULT_MODE=skip ;;
-      --terminal) TERMINAL_MODE=install ;;
-      --no-terminal) TERMINAL_MODE=skip ;;
+      --select) SELECT_ONLY=1 ;;
+      --config)
+        (($# >= 2)) || { usage >&2; die "--config needs a file"; }
+        CONFIG_FILE="$2"
+        CONFIG_EXPLICIT=1
+        shift
+        ;;
+      --no-packages) DO_PACKAGES=0 FLAGS_USED=1 ;;
+      --no-configs) DO_CONFIGS=0 FLAGS_USED=1 ;;
+      --ssh-server) DO_SSH_SERVER=1 FLAGS_USED=1 ;;
+      --ssh-key) SSH_KEY_MODE=create FLAGS_USED=1 ;;
+      --no-ssh-key) SSH_KEY_MODE=skip FLAGS_USED=1 ;;
+      --zsh-default) ZSH_DEFAULT_MODE=change FLAGS_USED=1 ;;
+      --no-zsh-default) ZSH_DEFAULT_MODE=skip FLAGS_USED=1 ;;
+      --terminal) TERMINAL_MODE=install FLAGS_USED=1 ;;
+      --no-terminal) TERMINAL_MODE=skip FLAGS_USED=1 ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -664,24 +825,67 @@ parse_args() {
   done
 }
 
+# True when this run should show the menu.
+want_menu() {
+  if ((SELECT_ONLY)); then
+    menu_available || die "--select needs a terminal"
+    return 0
+  fi
+  ((!ASSUME_YES && !DRY_RUN && !FLAGS_USED)) && menu_available
+}
+
+# Run every ticked step, in catalog-independent install order.
+run_steps() {
+  local family="$1"
+  if action_selected pkg || item_selected extras.ssh-server; then
+    # In the main shell: PATH changes must reach the steps, which are subshells.
+    [[ "${family}" != "macos" ]] || ensure_brew
+    run_step packages install_packages "${family}"
+  fi
+  if item_selected extras.ssh-server; then run_step "ssh server" enable_ssh_server "${family}"; fi
+  if action_selected step:configs; then run_step configs install_configs "${family}"; fi
+  if action_selected step:tpm; then run_step "tmux plugins" install_tpm; fi
+  if action_selected step:terminals; then run_step terminals setup_terminals "${family}"; fi
+  if action_selected step:wezterm-wsl; then run_step "WezTerm on Windows" install_windows_terminal; fi
+  if action_selected step:ssh-key; then run_step "SSH key" setup_ssh_key; fi
+  if action_selected step:zsh-login; then run_step "zsh login shell" setup_zsh_default; fi
+}
+
 main() {
   parse_args "$@"
-  local family
+  local family menu=0
   family="$(detect_family)"
   info "Detected distro family: ${family}"
+  load_catalog "${family}"
 
-  if ((DO_PACKAGES)); then
-    if confirm "Install basic packages via ${family} package manager?"; then
-      install_packages "${family}"
-      ((DO_SSH_SERVER)) && enable_ssh_server "${family}"
-    else
-      warn "skipped packages"
-    fi
+  [[ -n "${CONFIG_FILE}" ]] || CONFIG_FILE="$(config_default_path)"
+  if is_root && [[ -n "${SUDO_USER:-}" ]]; then
+    warn "running under sudo: using the selection in ${CONFIG_FILE}, not ${SUDO_USER}'s"
   fi
-  ((DO_CONFIGS)) && install_configs "${family}"
-  setup_terminals "${family}"
-  setup_ssh_key
-  setup_zsh_default
+  config_load "${CONFIG_FILE}"
+  if want_menu; then menu=1; fi
+  if ((CONFIG_EXPLICIT && !menu)) && [[ ! -f "${CONFIG_FILE}" ]]; then
+    die "config file not found: ${CONFIG_FILE}"
+  fi
+
+  if ((menu)) && ! menu_run; then
+    info "Nothing saved, nothing installed."
+    return 0
+  fi
+  apply_flag_overrides
+  print_plan
+  confirm "Go ahead?" || { info "Nothing saved, nothing installed."; return 0; }
+  if ((menu)); then
+    config_save "${CONFIG_FILE}" || die "cannot save ${CONFIG_FILE}; nothing installed"
+    ok "Selection saved to ${CONFIG_FILE}"
+  fi
+  if ((SELECT_ONLY)); then
+    info "Done."
+    return 0
+  fi
+
+  run_steps "${family}"
+  print_summary || die "some steps failed; rerun to retry"
   info "Done."
 }
 

@@ -1,0 +1,2 @@
+# Byte-exact fixtures: CRLF and the BOM in config.input are the point.
+tests/fixtures/config.* -text

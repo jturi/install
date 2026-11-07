@@ -69,7 +69,7 @@ package manager:
 
 ## What it installs
 
-- Packages: `packages/base.txt`, grouped:
+- Packages: `pkg` lines in `catalog.txt`, grouped:
   - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, man-db
   - system: sudo, htop, procps, lsof, which, file, diffutils
   - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
@@ -90,16 +90,18 @@ package manager:
   - `bash_show_origin` → `~/.bash_show_origin`: before each command, prints
     where its aliases and functions are defined (`ll → ls -la  ~/.bash_aliases:12`).
     Toggle with `show_origin on|off`. Works in bash and zsh.
-  - Terminals (opt-in): after the configs `setup.sh` asks
-    `Install kitty and Ghostty plus their configs? [y/N]` (default No).
-    On `y` it installs the kitty + Ghostty packages and copies
-    `configs/kitty/<os>.conf` → `~/.config/kitty/kitty.conf` plus
+  - Terminals (off by default): kitty and Ghostty packages plus
+    `configs/kitty/<os>.conf` → `~/.config/kitty/kitty.conf` and
     `configs/ghostty/<os>.config` → `~/.config/ghostty/config` on Linux or
     `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` on
-    macOS. Ghostty has no Debian/Ubuntu apt package, so there only kitty
-    installs via apt (install Ghostty from https://ghostty.org/download).
-- `--terminal`: install the kitty + Ghostty packages and configs without asking.
-- `--no-terminal`: skip the question entirely.
+    macOS. Ghostty has no Debian/Ubuntu apt package, so install it from
+    https://ghostty.org/download there. Under WSL the menu also offers WezTerm
+    on Windows (`scoop bucket add extras`, `scoop install wezterm`, and
+    `configs/wezterm/windows.lua` → `%USERPROFILE%\.wezterm.lua`). Scoop must
+    already be on `PATH` (see https://scoop.sh); without it, only the config is
+    copied.
+- `--terminal`: install every terminal for this platform without the menu.
+- `--no-terminal`: skip all terminals.
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
@@ -159,29 +161,30 @@ fi
 
 ## Login shell
 
-At the end, `setup.sh` asks `Make zsh your login shell (now /bin/bash)? [y/N]`.
-On Linux it runs `usermod -s <zsh> <user>` (via sudo); on macOS `chsh -s`.
-Log out and back in to use it.
+Tick `zsh as login shell` under `extras`. On Linux it runs
+`usermod -s <zsh> <user>` (via sudo); on macOS `chsh -s`. Log out and back in to
+use it.
 
-- `--zsh-default`: change it without asking.
-- `--no-zsh-default`: skip the question.
-- `--yes`, `--dry-run`, or no terminal: never changes the shell.
+- `--zsh-default`: change it for this run.
+- `--no-zsh-default`: skip it for this run.
+- A saved selection also applies under `--yes`.
 
 ## SSH key
 
-After the configs, `setup.sh` checks `~/.ssh` for a key pair (any `*.pub`
-with its private key, so custom names like `id_github` count). If none
-exists, it asks `Create an ed25519 SSH key now? [Y/n]`, runs `ssh-keygen`
-(which asks for a passphrase), and prints the public key.
+Tick `SSH key` under `extras`. If `~/.ssh` has no key pair (any `*.pub` with its
+private key, so custom names like `id_github` count), `setup.sh` runs
+`ssh-keygen`, which asks for a passphrase, and prints the public key.
 
-- `--ssh-key`: create the key without asking (empty passphrase when there is no terminal).
+- `--ssh-key`: create the key for this run (empty passphrase when there is no
+  terminal).
 - `--no-ssh-key`: skip the check.
-- `--yes`, `--dry-run`, or no terminal: never creates a key, only warns.
+- With no terminal, a saved selection only warns: it never creates a key with an
+  empty passphrase.
 
 ## Add more
 
-- Package: add a line to `packages/base.txt`. Add a `pkg_name` case if the
-  name differs on a distro.
+- Package: add a line to `catalog.txt`. Add a `pkg_name` case if the name
+  differs on a distro.
 - Config: put the file in `configs/` and add `"src:target"` to `CONFIG_MAP`
   in `setup.sh`.
 
@@ -196,7 +199,7 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make install-yes` | full setup, no prompts (no SSH key, no terminals, shell unchanged) |
 | `make dry-run` | show what would run, change nothing |
 | `make packages` / `make configs` | only packages / only configs |
-| `make terminals` | install kitty + Ghostty packages and configs |
+| `make terminals` | install kitty + Ghostty packages and configs (WSL: also WezTerm via Scoop) |
 | `make ssh-key` | create an ed25519 key if none exists |
 | `make ssh-server` | install and enable the OpenSSH server |
 | `make zsh-default` | make zsh the login shell |

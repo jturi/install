@@ -7,11 +7,11 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help
-.PHONY: install install-yes dry-run packages configs terminals ssh-key ssh-server zsh-default
+.PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default
 .PHONY: lint test test-bash32 test-docker check test-all
 .PHONY: sync-dotfiles
 
-SHELL_FILES := setup.sh tests/*.sh
+SHELL_FILES := setup.sh lib/*.sh tests/*.sh
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 
@@ -28,14 +28,17 @@ help: ## Show this help
 
 ##@ Install
 
-install: ## Full setup: packages, configs, SSH key + zsh prompts
+install: ## Choose what to install in a menu, then install it
 	./setup.sh $(ARGS)
 
-install-yes: ## Full setup without prompts (no SSH key, shell unchanged)
+install-yes: ## Full setup without prompts: saved selection, else defaults
 	./setup.sh --yes $(ARGS)
 
 dry-run: ## Show what install would do, change nothing
 	./setup.sh --dry-run $(ARGS)
+
+select: ## Choose and save a selection, install nothing
+	./setup.sh --select $(ARGS)
 
 packages: ## Install packages only
 	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default $(ARGS)
@@ -49,7 +52,7 @@ ssh-key: ## Create an ed25519 SSH key if none exists
 ssh-server: ## Install the OpenSSH server and enable sshd (macOS: Remote Login)
 	./setup.sh --no-configs --no-terminal --no-ssh-key --no-zsh-default --ssh-server $(ARGS)
 
-terminals: ## Install kitty + Ghostty packages and configs
+terminals: ## Install kitty + Ghostty (WSL: also WezTerm via Scoop) and configs
 	./setup.sh $(ONLY) --terminal $(ARGS)
 
 zsh-default: ## Make zsh the login shell
@@ -63,6 +66,8 @@ lint: ## shellcheck all scripts
 
 test: ## Unit tests (no root, no containers)
 	bash tests/test_setup.sh
+	bash tests/test_repo.sh --self-test
+	bash tests/test_repo.sh
 
 test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash)
 	docker run --rm --user 1000 -e HOME=/tmp/h -v "$(CURDIR):/src:ro" bash:3.2 \

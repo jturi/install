@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2030,SC2031,SC2329 # tests change state inside subshells on purpose
 # Unit tests for setup.sh: distro detection, package mapping, config install.
 set -euo pipefail
 
@@ -10,6 +11,9 @@ set +e
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 FAILS=0
+# Tests may run under WSL: never touch the real Windows home or Scoop.
+echo "6.0.0-generic" >"${WORK}/osrelease-linux"
+KERNEL_RELEASE_FILE="${WORK}/osrelease-linux"
 
 check() {
   local name="$1" want="$2" got="$3"
@@ -59,15 +63,38 @@ check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
-check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
+check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(load_catalog macos; config_load "${WORK}/none"; selected_packages macos | xargs)"
 
-printf '%s\n' '# comment' '' 'tmux' 'vim  # editor' >"${WORK}/pkgs.txt"
-check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages fedora | xargs)"
-printf '%s\n' tmux which vim >"${WORK}/pkgs.txt"
-check package-list-skip-empty "tmux vim" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages debian | xargs)"
+# Catalog parsing and platform filtering.
+FIXTURE="${ROOT}/tests/fixtures/catalog.txt"
+keys_for() { (catalog_load "${FIXTURE}" "$1" "$2"; local i; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs); }
+check catalog-linux "shell.zsh shell.less configs.tmux" "$(keys_for linux 0)"
+check catalog-wsl "shell.zsh shell.less configs.tmux terminals.wezterm-wsl" "$(keys_for linux 1)"
+check catalog-macos "shell.zsh configs.tmux terminals.ghostty" "$(keys_for macos 0)"
+check catalog-groups "shell configs terminals" "$(catalog_load "${FIXTURE}" linux 1; catalog_groups | xargs)"
+check catalog-fields "tmux config|on|step:configs" "$(catalog_load "${FIXTURE}" linux 0; printf '%s|%s|%s' "${CAT_LABEL[2]}" "${CAT_DEFAULT[2]}" "${CAT_ACTION[2]}")"
+check catalog-real-scoop-action "scoop:main/cmder" "$(catalog_load "${ROOT}/catalog.txt" windows 0; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "${CAT_ITEM[i]}" == cmder ]] && echo "${CAT_ACTION[i]}"; done)"
+check catalog-crlf "shell.zsh" "$(sed 's/$/\r/' "${FIXTURE}" >"${WORK}/crlf.txt"; catalog_load "${WORK}/crlf.txt" macos 0; catalog_key 0)"
+# Malformed catalogs stop with the line number.
+bad_catalog() { printf '%s\n' '# comment' "$1" >"${WORK}/bad.txt"; (catalog_load "${WORK}/bad.txt" linux 0) 2>&1 | grep -o 'catalog.*line 2' | sed 's/.*line/line/'; }
+check catalog-too-few "line 2" "$(bad_catalog 'a|b|c|linux|on')"
+check catalog-too-many "line 2" "$(bad_catalog 'a|b|c|linux|on|pkg|x')"
+check catalog-bad-default "line 2" "$(bad_catalog 'a|b|c|linux|maybe|pkg')"
+check catalog-bad-platform "line 2" "$(bad_catalog 'a|b|c|plan9|on|pkg')"
+check catalog-bad-action "line 2" "$(bad_catalog 'a|b|c|linux|on|nope')"
+check catalog-missing-file "1" "$( (catalog_load "${WORK}/none.txt" linux 0) >/dev/null 2>&1; echo $?)"
+# A pkg item with no package on this distro is hidden; steps are not.
+printf '%s\n' 'shell|tmux|tmux|macos|on|pkg' 'shell|less|less|macos|on|pkg' 'configs|tmux|tmux|macos|on|step:configs' >"${WORK}/mapped.txt"
+check catalog-hides-unmapped "shell.tmux configs.tmux" "$(catalog_load "${WORK}/mapped.txt" macos 0; catalog_hide_unmapped macos; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs)"
 
 # --ssh-server on Arch: openssh is listed once.
-check arch-sshd-dedup "1" "$(DO_SSH_SERVER=1 DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+check arch-sshd-dedup "1" "$(load_catalog arch; config_load "${WORK}/none"; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+# An empty selection plus the SSH server must not trip set -u on bash 3.2.
+check empty-selection-ssh-server "openssh" "$(load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_SEL[@]}; i++)); do CAT_SEL[i]=0; done; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -o 'openssh$' | head -n 1)"
+check unticked-package-not-installed "0" "$(load_catalog debian; config_load "${WORK}/none"; set_selection shell.vim 0; selected_packages debian | grep -c '^vim$')"
+# Config steps below use the default selection.
+load_catalog debian
+config_load "${WORK}/none"
 
 # Config install: fresh, idempotent, backup on change.
 # (Terminal configs are opt-in via setup_terminals, not install_configs.)
@@ -200,30 +227,254 @@ check macos-nanorc-idempotent "0" "$(find "${home_mac}" -maxdepth 1 -name '*.bak
 check macos-kitty-skipped "no" "$([[ -e "${home_mac}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
 check macos-ghostty-skipped "no" "$([[ -e "${home_mac}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
 # Opt-in path still copies the right per-platform files.
-TARGET_HOME="${home}" install_terminal_configs linux >/dev/null
+TARGET_HOME="${home}" install_terminal_configs linux kitty ghostty >/dev/null
 check kitty-linux-copied "same" "$(cmp -s "${ROOT}/configs/kitty/linux.conf" "${home}/.config/kitty/kitty.conf" && echo same)"
 check ghostty-linux-copied "same" "$(cmp -s "${ROOT}/configs/ghostty/linux.config" "${home}/.config/ghostty/config" && echo same)"
 # The macOS Ghostty path must not be created on Linux.
 check ghostty-mac-path-absent "no" "$([[ -e "${home}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
-TARGET_HOME="${home_mac}" install_terminal_configs macos >/dev/null
+TARGET_HOME="${home_mac}" install_terminal_configs macos kitty ghostty >/dev/null
 check macos-kitty-copied "same" "$(cmp -s "${ROOT}/configs/kitty/macos.conf" "${home_mac}/.config/kitty/kitty.conf" && echo same)"
 check macos-ghostty-copied "same" "$(cmp -s "${ROOT}/configs/ghostty/macos.config" "${home_mac}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" && echo same)"
 
-# Terminal prompt: default No (empty / n / non-terminal / --yes all skip).
+# Only ticked terminals are installed.
 t_home="${WORK}/t_home"
 mkdir -p "${t_home}"
-printf 'n\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux >/dev/null 2>&1
-check terminal-ask-n-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
-printf '\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux >/dev/null 2>&1
-check terminal-ask-empty-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
-TARGET_HOME="${t_home}" setup_terminals linux </dev/null >/dev/null 2>&1
-check terminal-ask-eof-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
-TARGET_HOME="${t_home}" TERMINAL_MODE=skip setup_terminals linux >/dev/null 2>&1
-check terminal-skip-flag "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
-TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux >/dev/null 2>&1
-check terminal-yes-skips "no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
-check terminal-skip-msg "skipping kitty + Ghostty" "$(printf 'n\n' | TARGET_HOME="${t_home}" TERMINAL_MODE=ask setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
-check terminal-yes-msg "skipping kitty + Ghostty" "$(TARGET_HOME="${t_home}" TERMINAL_MODE=ask ASSUME_YES=1 setup_terminals linux 2>&1 | grep -o 'skipping kitty + Ghostty')"
+TARGET_HOME="${t_home}" install_terminal_configs linux kitty >/dev/null
+check terminal-only-kitty-config "yes/no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)/$([[ -e "${t_home}/.config/ghostty/config" ]] && echo yes || echo no)"
+check terminal-only-kitty-package "kitty" "$(as_root() { run "$@"; }; DRY_RUN=1 install_terminal_packages fedora kitty 2>&1 | grep -o 'install -y.*' | sed 's/install -y //')"
+check terminal-only-ghostty-brew "ghostty" "$(ensure_brew() { :; }; DRY_RUN=1 install_terminal_packages macos ghostty 2>&1 | grep -o 'cask.*' | sed 's/cask //')"
+
+# WSL: WezTerm through Scoop on the Windows side, config in the Windows home.
+echo "6.18.33.2-microsoft-standard-WSL2" >"${WORK}/osrelease-wsl"
+check wsl-detected "yes" "$(KERNEL_RELEASE_FILE="${WORK}/osrelease-wsl" is_wsl && echo yes)"
+check wsl-not-on-linux "no" "$(is_wsl && echo yes || echo no)"
+check wsl-missing-file "no" "$(KERNEL_RELEASE_FILE=/nonexistent is_wsl && echo yes || echo no)"
+stub="${WORK}/stub"
+win_home="${WORK}/win_home"
+mkdir -p "${stub}" "${win_home}"
+cat >"${stub}/scoop" <<STUB
+#!/bin/sh
+echo "\$*" >>"${WORK}/scoop.log"
+[ "\$1" != bucket ]
+STUB
+chmod +x "${stub}/scoop"
+PATH="${stub}:${PATH}" WINDOWS_HOME="${win_home}" install_windows_terminal >/dev/null 2>&1
+check wezterm-scoop-calls "bucket add extras|install wezterm" "$(paste -sd '|' "${WORK}/scoop.log")"
+check wezterm-config-copied "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lua" "${win_home}/.wezterm.lua" && echo same)"
+# No Scoop: warn, still copy the config (as kitty does when its package fails).
+nobin="${WORK}/nobin"
+mkdir -p "${nobin}"
+for tool in cat cmp cp date dirname mkdir rm; do ln -s "$(command -v "${tool}")" "${nobin}/${tool}"; done
+rm -f "${win_home}/.wezterm.lua"
+check wezterm-no-scoop-warns "scoop not found" "$(PATH="${nobin}" WINDOWS_HOME="${win_home}" install_windows_terminal 2>&1 | grep -o 'scoop not found')"
+check wezterm-no-scoop-config "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lua" "${win_home}/.wezterm.lua" && echo same)"
+
+# Saved selection.
+selection_of() { # <config file> <key>
+  catalog_load "${FIXTURE}" linux 1
+  config_load "$1" 2>/dev/null
+  local i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "$(catalog_key "${i}")" == "$2" ]] && printf '%s/%s' "${CAT_SEL[i]}" "${CAT_NEW[i]}"
+  done
+}
+cfg="${WORK}/cfg"
+check config-path "${WORK}/h/.local/bootstrap/config" "$(TARGET_HOME="${WORK}/h" config_default_path)"
+check config-missing-uses-defaults "1/0" "$(selection_of "${WORK}/none" shell.zsh)"
+check config-missing-off-default "0/0" "$(selection_of "${WORK}/none" shell.less)"
+printf 'shell.zsh=0\nshell.less=1\n' >"${cfg}"
+check config-reads-off "0/0" "$(selection_of "${cfg}" shell.zsh)"
+check config-reads-on "1/0" "$(selection_of "${cfg}" shell.less)"
+check config-new-item "1/1" "$(selection_of "${cfg}" configs.tmux)"
+check config-bom-crlf-first-key "1/0" "$(selection_of "${ROOT}/tests/fixtures/config.input" shell.zsh)"
+check config-bom-crlf-later-key "0/0" "$(selection_of "${ROOT}/tests/fixtures/config.input" configs.tmux)"
+printf 'shell.zsh=2\nconfigs.tmux\n=1\n' >"${cfg}.bad"
+check config-bad-value-default "1/1" "$(selection_of "${cfg}.bad" shell.zsh)"
+check config-bad-lines-warn "3" "$(catalog_load "${FIXTURE}" linux 1; config_load "${cfg}.bad" 2>&1 | grep -c 'ignoring')"
+# Saving: both engines must write these exact bytes.
+save_fixture() { # <target>
+  catalog_load "${FIXTURE}" linux 1
+  config_load "${ROOT}/tests/fixtures/config.input" 2>/dev/null
+  config_save "$1"
+}
+(save_fixture "${WORK}/save/config")
+check config-save-bytes "same" "$(cmp "${WORK}/save/config" "${ROOT}/tests/fixtures/config.expected" && echo same)"
+(save_fixture "${WORK}/a b/.local/bootstrap/config")
+check config-save-space-path "same" "$(cmp "${WORK}/a b/.local/bootstrap/config" "${ROOT}/tests/fixtures/config.expected" && echo same)"
+(save_fixture "${WORK}/save/config")
+check config-unchanged-no-backup "0" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+printf 'shell.zsh=0\n' >"${WORK}/save/config"
+(save_fixture "${WORK}/save/config")
+check config-changed-one-backup "1" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+check config-no-temp-left "0" "$(find "${WORK}/save" -name '*.tmp.*' | wc -l | tr -d ' ')"
+check config-dry-run-writes-nothing "no" "$(DRY_RUN=1; save_fixture "${WORK}/dry/config"; [[ -e "${WORK}/dry" ]] && echo yes || echo no)"
+if [[ "${EUID}" -ne 0 ]]; then
+  mkdir -p "${WORK}/ro"
+  printf 'shell.zsh=0\n' >"${WORK}/ro/config"
+  chmod 555 "${WORK}/ro"
+  check config-readonly-fails "1" "$( (save_fixture "${WORK}/ro/config") >/dev/null 2>&1; echo $?)"
+  check config-readonly-keeps-old "shell.zsh=0" "$(cat "${WORK}/ro/config")"
+  chmod 755 "${WORK}/ro"
+fi
+
+# Menu key handling, with no terminal involved.
+menu_setup() { # <catalog> [rows]
+  catalog_load "$1" linux 1
+  config_load "${WORK}/none"
+  MENU_ROWS="${2:-20}"
+  menu_init
+}
+press() { local k; for k in "$@"; do menu_handle_key "${k}"; done; }
+big="${WORK}/big.txt"
+for ((n = 1; n <= 20; n++)); do printf 'big|i%s|Item %s|linux|on|step:x\n' "${n}" "${n}"; done >"${big}"
+check menu-down "1" "$(menu_setup "${FIXTURE}"; press down; echo "${MENU_CURSOR}")"
+check menu-down-stops "2" "$(menu_setup "${FIXTURE}"; press down down down down; echo "${MENU_CURSOR}")"
+check menu-up-stops "0" "$(menu_setup "${FIXTURE}"; press up; echo "${MENU_CURSOR}")"
+check menu-summary "1/2 selected" "$(menu_setup "${FIXTURE}"; menu_group_summary shell)"
+check menu-space-partial-selects-all "2/2 selected" "$(menu_setup "${FIXTURE}"; press space; menu_group_summary shell)"
+check menu-space-full-clears "0/2 selected" "$(menu_setup "${FIXTURE}"; press space space; menu_group_summary shell)"
+check menu-enter-opens "shell" "$(menu_setup "${FIXTURE}"; press enter; echo "${MENU_OPEN_GROUP}")"
+check menu-space-inside-toggles-one "2/2 selected" "$(menu_setup "${FIXTURE}"; press enter down space; menu_group_summary shell)"
+check menu-back-closes "|1" "$(menu_setup "${FIXTURE}"; press down enter back; echo "${MENU_OPEN_GROUP}|${MENU_CURSOR}")"
+check menu-enter-single-item-toggles "|0/1 selected" "$(menu_setup "${FIXTURE}"; press down enter; echo "${MENU_OPEN_GROUP}|$(menu_group_summary configs)")"
+check menu-back-at-top-is-harmless "0" "$(menu_setup "${FIXTURE}"; press back; echo "${MENU_CURSOR}")"
+check menu-continue "continue" "$(menu_setup "${FIXTURE}"; press continue; echo "${MENU_RESULT}")"
+check menu-quit "quit" "$(menu_setup "${FIXTURE}"; press enter quit; echo "${MENU_RESULT}")"
+# A list taller than the screen scrolls with the cursor.
+check menu-scroll-down "7|3" "$(menu_setup "${big}" 5; press enter down down down down down down down; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-scroll-up "2|2" "$(menu_setup "${big}" 5; press enter down down down down down down down up up up up up; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-scroll-bottom "19|15" "$(menu_setup "${big}" 5; press enter; for ((n = 0; n < 30; n++)); do press down; done; echo "${MENU_CURSOR}|${MENU_TOP}")"
+check menu-render-window "5" "$(menu_setup "${big}" 5; press enter; menu_render | grep -c 'Item ')"
+check menu-render-has-cursor-row "1" "$(menu_setup "${big}" 5; press enter down down down down down down down; menu_render | grep -c '^> .*Item 8')"
+printf 'shell.zsh=1\n' >"${cfg}.new"
+check menu-render-new "1" "$(catalog_load "${FIXTURE}" linux 1; config_load "${cfg}.new"; MENU_ROWS=20; menu_init; press enter; menu_render | grep -c 'less.*new')"
+check menu-available-dumb "no" "$(TERM=dumb menu_available && echo yes || echo no)"
+check menu-available-pipe "no" "$(TERM=xterm menu_available </dev/null && echo yes || echo no)"
+
+# The real menu in a pseudo-terminal: arrow, space, continue. BSD script differs,
+# so this runs only where `script -qec` works (not in the bash 3.2 image).
+if script -qec true /dev/null >/dev/null 2>&1; then
+  cat >"${WORK}/menu_driver.sh" <<DRIVER
+source "${ROOT}/setup.sh"
+set +e
+before="\$(stty -g)"
+catalog_load "${FIXTURE}" linux 1
+config_load "${WORK}/none"
+menu_run; rc=\$?
+{ echo "rc=\${rc}"; menu_group_summary configs; [[ "\$(stty -g)" == "\${before}" ]] && echo restored; } >"${WORK}/menu_result"
+DRIVER
+  { sleep 1; printf '\033[B \033[Bc'; sleep 1; } | script -qec "bash ${WORK}/menu_driver.sh" "${WORK}/menu_log" >/dev/null 2>&1
+  check menu-pty "rc=0 0/1 selected restored" "$(xargs <"${WORK}/menu_result")"
+  check menu-pty-cursor-shown "1" "$(grep -c $'\033\[?25h' "${WORK}/menu_log")"
+else
+  printf 'SKIP menu-pty: no util-linux script\n'
+fi
+
+# configs.* items are honoured one by one.
+mkdir -p "${WORK}/sel_home"
+(set_selection configs.tmux 0; TARGET_HOME="${WORK}/sel_home" install_configs >/dev/null 2>&1)
+check configs-unticked-skipped "no" "$([[ -e "${WORK}/sel_home/.tmux.conf" ]] && echo yes || echo no)"
+check configs-ticked-installed "yes" "$([[ -e "${WORK}/sel_home/.nanorc" ]] && echo yes || echo no)"
+
+# Run flow: main with every step stubbed.
+printf 'ID=debian\n' >"${WORK}/os-debian"
+m_home="${WORK}/m_home"
+m_log="${WORK}/steps.log"
+m_cfg="${m_home}/.local/bootstrap/config"
+run_main() {
+  (
+    UNAME_S="${M_UNAME:-Linux}" OS_RELEASE_FILE="${WORK}/os-debian" TARGET_HOME="${m_home}"
+    install_packages() { echo packages >>"${m_log}"; }
+    enable_ssh_server() { echo ssh-server >>"${m_log}"; }
+    install_configs() { echo configs >>"${m_log}"; }
+    install_tpm() { echo tpm >>"${m_log}"; }
+    setup_terminals() { echo "terminals" >>"${m_log}"; }
+    install_windows_terminal() { echo wezterm-wsl >>"${m_log}"; }
+    setup_ssh_key() { echo ssh-key >>"${m_log}"; }
+    setup_zsh_default() { echo zsh-login >>"${m_log}"; }
+    [[ -z "${M_EXTRA:-}" ]] || eval "${M_EXTRA}"
+    main "$@"
+  ) </dev/null 2>&1
+}
+m_reset() { rm -rf "${m_home}"; mkdir -p "${m_home}"; : >"${m_log}"; M_EXTRA=""; }
+m_save() { mkdir -p "$(dirname "${m_cfg}")"; printf '%s\n' "$@" >"${m_cfg}"; }
+steps() { xargs <"${m_log}"; }
+exists() { [[ -e "${m_cfg}" ]] && echo yes || echo no; }
+MENU_ON='menu_available() { return 0; }; menu_run() { echo menu >>"${m_log}"; }'
+DEFAULT_STEPS="packages configs tpm"
+
+m_reset; run_main --yes >/dev/null
+check main-yes-defaults "${DEFAULT_STEPS}" "$(steps)"
+check main-yes-writes-no-config "no" "$(exists)"
+m_reset; m_save 'tmux-plugins.tpm=0' 'extras.zsh-login=1'; run_main --yes >/dev/null
+check main-saved-selection "packages configs zsh-login" "$(steps)"
+m_reset; run_main --terminal >/dev/null
+check main-flag-terminal "${DEFAULT_STEPS} terminals" "$(steps)"
+check main-flag-not-saved "no" "$(exists)"
+m_reset; M_EXTRA="${MENU_ON}"; run_main --terminal >/dev/null
+check main-flag-skips-menu "${DEFAULT_STEPS} terminals" "$(steps)"
+m_reset; run_main --no-packages --yes >/dev/null
+check main-no-packages "configs tpm" "$(steps)"
+m_reset; m_save 'extras.ssh-server=1'; run_main --no-packages --yes >/dev/null
+check main-no-packages-clears-server "configs tpm" "$(steps)"
+m_reset; run_main --no-configs --yes >/dev/null
+check main-no-configs "packages" "$(steps)"
+m_reset; run_main --ssh-server --yes >/dev/null
+check main-ssh-server "packages ssh-server configs tpm" "$(steps)"
+# Modes.
+m_reset; M_EXTRA="${MENU_ON}"; run_main >/dev/null
+check main-menu-runs "menu ${DEFAULT_STEPS}" "$(steps)"
+check main-menu-saves "yes" "$(exists)"
+m_reset; M_EXTRA="${MENU_ON}"; run_main --yes >/dev/null
+check main-yes-no-menu "${DEFAULT_STEPS}" "$(steps)"
+m_reset; M_EXTRA="${MENU_ON}"; run_main --dry-run >/dev/null
+check main-dry-run-no-menu "${DEFAULT_STEPS}" "$(steps)"
+check main-dry-run-no-config "no" "$(exists)"
+m_reset; run_main --select >/dev/null; rc=$?
+check main-select-no-terminal "1" "${rc}"
+m_reset; M_EXTRA="${MENU_ON}"; run_main --select >/dev/null
+check main-select-only-menu "menu" "$(steps)"
+check main-select-saves "yes" "$(exists)"
+m_reset; M_EXTRA='menu_available() { return 0; }; menu_run() { return 1; }'; run_main >/dev/null; rc=$?
+check main-quit-exit "0" "${rc}"
+check main-quit-no-steps "" "$(steps)"
+check main-quit-no-config "no" "$(exists)"
+m_reset; run_main --yes --config "${WORK}/missing" >/dev/null; rc=$?
+check main-config-missing-exit "1" "${rc}"
+check main-config-missing-no-steps "" "$(steps)"
+m_reset; printf 'tmux-plugins.tpm=0\n' >"${WORK}/other.cfg"; run_main --yes --config "${WORK}/other.cfg" >/dev/null
+check main-config-file "packages configs" "$(steps)"
+m_reset; M_EXTRA="${MENU_ON}"; run_main --config "${WORK}/new dir/cfg" >/dev/null
+check main-config-created-on-save "yes" "$([[ -e "${WORK}/new dir/cfg" ]] && echo yes || echo no)"
+check main-config-usage "1" "$(m_reset; run_main --config 2>&1 >/dev/null; echo $?)"
+if [[ "${EUID}" -ne 0 ]]; then
+  m_reset; mkdir -p "${WORK}/ro2"; chmod 555 "${WORK}/ro2"; M_EXTRA="${MENU_ON}"; run_main --config "${WORK}/ro2/cfg" >/dev/null; rc=$?
+  check main-save-failure-exit "1" "${rc}"
+  check main-save-failure-no-steps "menu" "$(steps)"
+  chmod 755 "${WORK}/ro2"
+fi
+# A failed step does not stop later ones, and the run reports it.
+m_reset; M_EXTRA='install_configs() { false; echo after-false >>"${m_log}"; }'; out="$(run_main --yes)"; rc=$?
+check main-failure-exit "1" "${rc}"
+check main-failure-continues "packages tpm" "$(steps)"
+check main-failure-summary "1" "$(printf '%s\n' "${out}" | grep -c 'FAILED.*configs')"
+check main-ok-summary "1" "$(printf '%s\n' "${out}" | grep -c 'OK.*packages')"
+# brew set up in the main shell reaches every step, which run in subshells.
+m_reset; M_UNAME=Darwin; M_EXTRA='ensure_brew() { BREW_MARK=set; }; install_tpm() { echo "brew-${BREW_MARK:-lost}" >>"${m_log}"; }'; run_main --yes >/dev/null; M_UNAME=""
+check main-brew-survives "packages configs brew-set" "$(steps)"
+# sudo: the config lands in root's home, so say which file is used.
+m_reset; M_EXTRA='is_root() { return 0; }; SUDO_USER=someone'; out="$(run_main --yes)"
+check main-sudo-warning "1" "$(printf '%s\n' "${out}" | grep -c "running under sudo.*${m_cfg}")"
+check main-sudo-continues "${DEFAULT_STEPS}" "$(steps)"
+# WSL item.
+m_reset; m_save 'terminals.wezterm-wsl=1'; run_main --yes >/dev/null
+check main-linux-ignores-wsl-item "${DEFAULT_STEPS}" "$(steps)"
+m_reset; m_save 'terminals.wezterm-wsl=1'; M_EXTRA="KERNEL_RELEASE_FILE='${WORK}/osrelease-wsl'"; run_main --yes >/dev/null
+check main-wsl-item "${DEFAULT_STEPS} wezterm-wsl" "$(steps)"
+# The plan names what happens and what does not.
+m_reset; out="$(run_main --yes)"
+check main-plan-install "1" "$(printf '%s\n' "${out}" | grep -c '^  install .*tmux config')"
+check main-plan-skip "1" "$(printf '%s\n' "${out}" | grep -c '^  skip .*SSH key')"
 
 # SSH key detection.
 check no-ssh-key "" "$(TARGET_HOME="${home}" find_ssh_key)"
@@ -240,12 +491,14 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   TARGET_HOME="${home2}" SSH_KEY_MODE=create setup_ssh_key </dev/null >/dev/null
   check key-created "yes" "$([[ -f "${home2}/.ssh/id_ed25519" && -f "${home2}/.ssh/id_ed25519.pub" ]] && echo yes)"
   check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh" 2>/dev/null || stat -f %Lp "${home2}/.ssh")"
-  check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=ask setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
+  check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=saved setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
 fi
 
+# Containers can run under a UID with no passwd entry: `id -un` then fails.
+# shellcheck disable=SC2329 # the stub is called through login_shell
+check login-shell-no-passwd "ok" "$( (set -e; id() { return 1; }; USER=nobody-here; login_shell >/dev/null; echo ok) 2>/dev/null )"
+
 # zsh login shell: ask mode without a terminal never changes anything.
-check zsh-ask-noninteractive "" "$(ZSH_DEFAULT_MODE=ask setup_zsh_default </dev/null 2>/dev/null | grep -i 'setting login shell')"
-check zsh-skip "" "$(ZSH_DEFAULT_MODE=skip setup_zsh_default 2>&1)"
 
 if ((FAILS)); then
   printf '%d test(s) failed\n' "${FAILS}"
