@@ -149,11 +149,41 @@ if ($SavedScoop) { $env:SCOOP = $SavedScoop }
 $env:USERPROFILE = $SavedProfile
 
 # Menu (Task 7). Mirrors the Task 4 key tests from lib/menu.sh.
+function New-TestState { return @{ Cursor = 0; OpenGroup = ''; Top = 0; Rows = 20; Result = ''; GroupCursor = 0 } }
 Check 'menu-available-redirected' 'False' ([string](Test-MenuAvailable))
+Check 'menu-available-console' 'True' ([string](Test-MenuAvailable -InputRedirected $false -OutputRedirected $false -WindowHeight 24))
+Check 'menu-available-input' 'False' ([string](Test-MenuAvailable -InputRedirected $true -OutputRedirected $false -WindowHeight 24))
+Check 'menu-available-term-unset' 'True' ([string](Test-MenuAvailable -InputRedirected $false -OutputRedirected $false -WindowHeight 24 -Term ''))
+Check 'menu-available-dumb' 'False' ([string](Test-MenuAvailable -InputRedirected $false -OutputRedirected $false -WindowHeight 24 -Term 'dumb'))
+$FrameDup = New-Object PSObject -Property @{ Group = 'terminals'; Item = 'cmder-extra'; Label = 'Cmder extra'; Default = 'off'; Action = 'scoop:main/cmder'; Key = 'terminals.cmder-extra'; Selected = $false; New = $false }
+$FrameCat = @($Catalog3) + @($FrameDup)
+$FrameGroups = @('terminals', 'win-apps', 'win-setup')
+$OpenState = New-TestState
+$OpenState.OpenGroup = 'terminals'
+$OpenState.Rows = 20
+$script:MenuView = @(0, 1)
+$OpenFrame = Get-MenuFrame -State $OpenState -Catalog $FrameCat -Groups $FrameGroups -View $script:MenuView -Width 80
+Check 'menu-frame-padded' 'True' ([string](($OpenFrame | Where-Object { $_.Length -ne 79 }).Count -eq 0))
+$WideState = New-TestState
+$WideState.OpenGroup = 'terminals'
+$WideState.Rows = 1
+$script:MenuView = @(0)
+$WideRow = New-Object PSObject -Property @{ Group = 'terminals'; Item = 'wide'; Label = 'Long label abcdefghij klmnopqrst uvwxyz 0123456789;'; Default = 'off'; Action = 'scoop:main/wide'; Key = 'terminals.wide'; Selected = $false; New = $false }
+$WideFrame = Get-MenuFrame -State $WideState -Catalog @($WideRow) -Groups @('terminals') -View $script:MenuView -Width 20
+Check 'menu-frame-truncates' 'True' ([string](($WideFrame | Where-Object { $_.Length -ne 19 }).Count -eq 0))
+Check 'menu-frame-long-label' 'True' ([string]($WideFrame[1] -eq '> [ ] Long label ab'))
+Check 'menu-frame-no-wrap' 'True' ([string]($WideFrame[1].Length -eq 19))
+$OpenText = ($OpenFrame -join "`n")
+$ClosedState = New-TestState
+$ClosedState.Rows = 20
+$script:MenuView = @(0, 1, 2)
+$ClosedFrame = Get-MenuFrame -State $ClosedState -Catalog $FrameCat -Groups $FrameGroups -View $script:MenuView -Width 80
+$ClosedText = ($ClosedFrame -join "`n")
+Check 'menu-frame-close-clears' 'False' ([string]($ClosedText.Contains('What to install > terminals')))
+Check 'menu-frame-footer' 'True' ([string]($ClosedText.Contains('c continues')))
 $script:MenuCatalog = @($Catalog3)
 $script:MenuGroups = @('terminals', 'win-apps', 'win-setup')
 $script:MenuView = @(0, 1, 2)
-function New-TestState { return @{ Cursor = 0; OpenGroup = ''; Top = 0; Rows = 20; Result = ''; GroupCursor = 0 } }
 $State = New-TestState
 Update-MenuState -State $State -Key 'down'
 Check 'menu-down' '1' ([string]$State.Cursor)

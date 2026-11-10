@@ -7,15 +7,21 @@ function New-MenuState {
 }
 
 function Test-MenuAvailable {
-  try {
-    if ([Console]::IsInputRedirected) { return $false }
-    if ([Console]::IsOutputRedirected) { return $false }
-  } catch { return $false }
-  $Term = $env:TERM
-  if (-not $Term -or $Term -eq '' -or $Term -eq 'dumb') { return $false }
-  try {
-    if ([Console]::WindowHeight -le 0) { return $false }
-  } catch { return $false }
+  param($InputRedirected = $null, $OutputRedirected = $null, $WindowHeight = $null, $Term = $null)
+  if ($InputRedirected -eq $null) {
+    try { $InputRedirected = [Console]::IsInputRedirected } catch { return $false }
+  }
+  if ($OutputRedirected -eq $null) {
+    try { $OutputRedirected = [Console]::IsOutputRedirected } catch { return $false }
+  }
+  if ($WindowHeight -eq $null) {
+    try { $WindowHeight = [Console]::WindowHeight } catch { return $false }
+  }
+  if ($Term -eq $null) { $Term = $env:TERM }
+  if ($InputRedirected) { return $false }
+  if ($OutputRedirected) { return $false }
+  if ($Term -eq 'dumb') { return $false }
+  if ($WindowHeight -le 0) { return $false }
   return $true
 }
 
@@ -109,6 +115,74 @@ function Update-MenuState {
   if ($State.Cursor -ge ($State.Top + $State.Rows)) { $State.Top = $State.Cursor - $State.Rows + 1 }
 }
 
+function Pad-MenuLine($Text, $Width) {
+  $Target = $Width - 1
+  if ($Target -le 0) { return '' }
+  $Len = 0
+  foreach ($Ch in $Text.ToCharArray()) { $Len = $Len + 1 }
+  if ($Len -gt $Target) { return $Text.Substring(0, $Target) }
+  $Pad = $Target - $Len
+  if ($Pad -gt 0) { return ($Text + (' ' * $Pad)) }
+  return $Text
+}
+
+function Get-MenuFrame {
+  param([hashtable]$State = @{}, $Catalog = @(), $Groups = @(), $View = @(), [int]$Width = 80)
+  $Lines = @()
+  if ($State.OpenGroup -ne '') {
+    $Lines += ('What to install > ' + $State.OpenGroup)
+  } else {
+    $Lines += 'What to install'
+  }
+  $Last = $State.Top + $State.Rows
+  if ($Last -gt $View.Count) { $Last = $View.Count }
+  $Counts = @{}
+  if ($State.OpenGroup -eq '') {
+    for ($i = 0; $i -lt $Catalog.Count; $i++) {
+      $G = $Catalog[$i].Group
+      if (-not $Counts.ContainsKey($G)) {
+        $On = 0
+        $Total = 0
+        for ($j = 0; $j -lt $Catalog.Count; $j++) {
+          if ($Catalog[$j].Group -eq $G) {
+            $Total = $Total + 1
+            if ($Catalog[$j].Selected) { $On = $On + 1 }
+          }
+        }
+        $Counts[$G] = ($On.ToString() + '/' + $Total.ToString() + ' selected')
+      }
+    }
+  }
+  for ($r = $State.Top; $r -lt $Last; $r++) {
+    $Pointer = '  '
+    if ($r -eq $State.Cursor) { $Pointer = '> ' }
+    if ($State.OpenGroup -ne '') {
+      $Lines += ($Pointer + (Format-MenuRow -Row $Catalog[$View[$r]]))
+    } else {
+      $Lines += ($Pointer + $Groups[$View[$r]] + ' ' + $Counts[$Groups[$View[$r]]])
+    }
+  }
+  $Shown = $Last - $State.Top
+  for ($p = $Shown; $p -lt $State.Rows; $p++) { $Lines += '' }
+  $Lines += 'arrows move, space toggles, enter opens, c continues, q quits'
+  $Out = @()
+  foreach ($L in $Lines) { $Out += (Pad-MenuLine $L $Width) }
+  return $Out
+}
+
+function Get-MenuGroupCounts {
+  param([string]$Group = '')
+  $On = 0
+  $Total = 0
+  for ($i = 0; $i -lt $script:MenuCatalog.Count; $i++) {
+    if ($script:MenuCatalog[$i].Group -eq $Group) {
+      $Total = $Total + 1
+      if ($script:MenuCatalog[$i].Selected) { $On = $On + 1 }
+    }
+  }
+  return @($On, $Total)
+}
+
 function Show-Menu {
   param([object[]]$Catalog = @())
   if (-not (Test-MenuAvailable)) { throw 'menu not available: input is redirected or no console' }
@@ -123,22 +197,23 @@ function Show-Menu {
   try { $State.Rows = [Console]::WindowHeight - 4 } catch { $State.Rows = 20 }
   if ($State.Rows -lt 3) { $State.Rows = 3 }
   try { [Console]::set_CursorVisible($false) } catch { }
+  $Width = 80
+  try { $Width = [Console]::WindowWidth } catch { $Width = 80 }
+  if ($Width -lt 1) { $Width = 80 }
+  [Console]::Clear()
   try {
     while ($State.Result -eq '') {
+      Update-MenuState -State $State -Key 'none'
       [Console]::SetCursorPosition(0, 0)
-      $Last = $State.Top + $State.Rows
-      if ($Last -gt $script:MenuView.Count) { $Last = $script:MenuView.Count }
-      for ($r = $State.Top; $r -lt $Last; $r++) {
-        $Pointer = '  '
-        if ($r -eq $State.Cursor) { $Pointer = '> ' }
-        Write-Output ($Pointer + 'row')
-      }
+      $Frame = Get-MenuFrame -State $State -Catalog $script:MenuCatalog -Groups $script:MenuGroups -View $script:MenuView -Width $Width
+      foreach ($FLine in $Frame) { [Console]::Write($FLine + "`r`n") }
       $Info = [Console]::ReadKey($true)
       $Key = 'none'
       if ($Info.Key -eq 'UpArrow') { $Key = 'up' }
       elseif ($Info.Key -eq 'DownArrow') { $Key = 'down' }
       elseif ($Info.Key -eq 'Spacebar') { $Key = 'space' }
       elseif ($Info.Key -eq 'Enter') { $Key = 'enter' }
+      elseif ($Info.Key -eq 'Escape') { $Key = 'back' }
       elseif ($Info.KeyChar -eq 'c') { $Key = 'continue' }
       elseif ($Info.KeyChar -eq 'q') { $Key = 'quit' }
       Update-MenuState -State $State -Key $Key
