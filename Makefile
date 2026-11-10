@@ -8,10 +8,11 @@
 
 .PHONY: help
 .PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default
-.PHONY: lint test test-bash32 test-docker check test-all
+.PHONY: lint test test-bash32 test-docker test-windows check test-all
 .PHONY: sync-dotfiles
 
 SHELL_FILES := setup.sh lib/*.sh tests/*.sh
+PS1_FILES := windows/lib.ps1 windows/menu.ps1 tests/test_windows.ps1 tests/check_ps1.ps1
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 
@@ -62,6 +63,10 @@ zsh-default: ## Make zsh the login shell
 
 lint: ## shellcheck all scripts
 	shellcheck -x $(SHELL_FILES) configs/bin/*.sh
+	@if command -v powershell.exe >/dev/null 2>&1; then \
+	  check=$$(wslpath -w tests/check_ps1.ps1); \
+	  for f in $(PS1_FILES); do w=$$(wslpath -w "$$f"); powershell.exe -NoProfile -File "$$check" "$$w" || exit 1; done; \
+	else echo 'SKIP ps1 parse: no powershell.exe'; fi
 	shellcheck -s bash configs/bash_aliases configs/bash_extras
 
 test: ## Unit tests (no root, no containers)
@@ -75,6 +80,10 @@ test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash
 
 test-docker: ## Real setup.sh run in Arch/Ubuntu/Debian/Fedora/Rocky/Alma containers
 	bash tests/docker_matrix.sh
+
+test-windows: ## Run the PowerShell tests on Windows (needs powershell.exe)
+	w=$$(wslpath -w tests/test_windows.ps1 2>/dev/null || echo tests/test_windows.ps1); \
+	powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$w"
 
 check: lint test ## lint + unit tests (fast)
 
