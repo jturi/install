@@ -1,7 +1,8 @@
 # Check step: after the run, test that every ticked item is really there and
 # print one "OK <label>", "MISSING <label>" or "SKIPPED <label>" line each.
 # Scoop apps count as installed when scoop\apps\<app>\<version>\install.json
-# exists (Scoop writes it last); commands must be on PATH. An SSH key that
+# exists (Scoop writes it last); commands must be on PATH; WSL needs a
+# registered Ubuntu distro. An SSH key that
 # was skipped for lack of a console is SKIPPED, not missing.
 # Puts the number of missing items in -Missing (a [ref]): setup.ps1 reads an
 # int on the pipeline as its exit code. ASCII only, PS 5.1 syntax only.
@@ -33,7 +34,7 @@ function Test-CheckItem {
     'step:vscode' { return ((Test-CheckScoopApp 'vscode') -or (Test-CheckCommand 'code')) }
     'step:flameshot' { return (Test-CheckScoopApp 'flameshot') }
     'step:wezterm' { return ((Test-CheckScoopApp 'wezterm') -and (Test-Path (Join-Path $H '.wezterm.lua'))) }
-    'step:wsl' { return (Test-CheckCommand 'wsl') }
+    'step:wsl' { return (Test-StepWslUbuntu) }
     'step:ssh-key' { return ((Find-StepSshKey -HomeDir $HomeDir) -ne '') }
   }
   return $true

@@ -244,6 +244,46 @@ $WezSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.l
 $global:ScoopLog = @()
 Invoke-WeztermStep -Items @('wezterm') -WeztermHome $SpaceHome -SrcPath $WezSrc
 Check 'step-wezterm-adds-extras' 'True' ([string]($global:ScoopLog -contains 'bucket add extras'))
+# VS Code: only missing extensions install; a failed one fails the step.
+$global:CodeLog = @(); $global:CodeFail = @()
+function global:code {
+  $global:LASTEXITCODE = 0
+  if ($args[0] -eq '--list-extensions') { Write-Output 'MS-VSCODE.PowerShell'; return }
+  $global:CodeLog += ($args -join ' ')
+  if ($global:CodeFail -contains $args[1]) { $global:LASTEXITCODE = 1 }
+}
+$ExtList = Join-Path $Work 'ext.txt'
+[IO.File]::WriteAllText($ExtList, "# c`r`nms-vscode.powershell`r`n`r`n  a.b  `r`na.b`r`nc.d`r`n", (New-Object Text.UTF8Encoding($false)))
+Check 'step-vscode-list-parse' 'ms-vscode.powershell a.b c.d' ((Get-VscodeStepExtensions -ListPath $ExtList) -join ' ')
+Invoke-VscodeStep -Items @('vscode') -ListPath $ExtList | Out-Null
+Check 'step-vscode-skips-installed' '--install-extension a.b|--install-extension c.d' ($global:CodeLog -join '|')
+$global:CodeLog = @(); $global:CodeFail = @('a.b')
+$CodeErr = try { Invoke-VscodeStep -Items @('vscode') -ListPath $ExtList 3>$null | Out-Null; '' } catch { $_.Exception.Message }
+$global:CodeFail = @()
+Check 'step-vscode-failure-throws' 'VS Code extensions failed: a.b' $CodeErr
+Check 'step-vscode-failure-continues' 'True' ([string]($global:CodeLog -contains '--install-extension c.d'))
+Remove-Item Function:\code
+
+# WSL: install only when no Ubuntu* distro is registered.
+$global:WslLog = @(); $global:WslDistros = @(); $global:WslListExit = 0
+function global:wsl {
+  if ($args -contains '-l') { $global:LASTEXITCODE = $global:WslListExit; $global:WslDistros; return }
+  $global:WslLog += ($args -join ' '); $global:LASTEXITCODE = 0
+  $global:WslDistros = @("U`0b`0u`0n`0t`0u`0")
+}
+$global:WslListExit = -1
+Check 'step-wsl-none' 'False' ([string](Test-StepWslUbuntu))
+$global:WslListExit = 0
+Invoke-WslStep -Items @('wsl') | Out-Null
+Check 'step-wsl-installs' '--install -d Ubuntu' ($global:WslLog -join '|')
+Check 'step-wsl-utf16-name' 'Ubuntu' ((Get-StepWslDistros) -join ',')
+Invoke-WslStep -Items @('wsl') | Out-Null
+Check 'step-wsl-idempotent' '1' ([string]$global:WslLog.Count)
+$global:WslDistros = @('Ubuntu-22.04'); $global:WslLog = @()
+Invoke-WslStep -Items @('wsl') | Out-Null
+Check 'step-wsl-other-ubuntu' '0' ([string]$global:WslLog.Count)
+Remove-Item Function:\wsl
+
 Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
 
 . (Join-Path $StepsDir 'profile.ps1')
