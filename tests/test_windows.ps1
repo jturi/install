@@ -264,26 +264,6 @@ Check 'step-vscode-failure-throws' 'VS Code extensions failed: a.b' $CodeErr
 Check 'step-vscode-failure-continues' 'True' ([string]($global:CodeLog -contains '--install-extension c.d'))
 Remove-Item Function:\code
 
-# WSL: install only when no Ubuntu* distro is registered.
-$global:WslLog = @(); $global:WslDistros = @(); $global:WslListExit = 0
-function global:wsl {
-  if ($args -contains '-l') { $global:LASTEXITCODE = $global:WslListExit; $global:WslDistros; return }
-  $global:WslLog += ($args -join ' '); $global:LASTEXITCODE = 0
-  $global:WslDistros = @("U`0b`0u`0n`0t`0u`0")
-}
-$global:WslListExit = -1
-Check 'step-wsl-none' 'False' ([string](Test-StepWslUbuntu))
-$global:WslListExit = 0
-Invoke-WslStep -Items @('wsl') | Out-Null
-Check 'step-wsl-installs' '--install -d Ubuntu' ($global:WslLog -join '|')
-Check 'step-wsl-utf16-name' 'Ubuntu' ((Get-StepWslDistros) -join ',')
-Invoke-WslStep -Items @('wsl') | Out-Null
-Check 'step-wsl-idempotent' '1' ([string]$global:WslLog.Count)
-$global:WslDistros = @('Ubuntu-22.04'); $global:WslLog = @()
-Invoke-WslStep -Items @('wsl') | Out-Null
-Check 'step-wsl-other-ubuntu' '0' ([string]$global:WslLog.Count)
-Remove-Item Function:\wsl
-
 Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
 
 . (Join-Path $StepsDir 'profile.ps1')
@@ -401,8 +381,123 @@ $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]
 Check 'step-check-sshkey-skipped' 'True|0' (([string]($SkipOut -match '(?m)^SKIPPED SSH key')) + '|' + $SkipMissing)
 $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $true | Out-String
 Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^MISSING SSH key')) + '|' + $SkipMissing)
+# Current Scoop writes scoop-install.json (older: install.json): both count.
+$NewApp = Join-Path $env:SCOOP (Join-Path 'apps' (Join-Path 'wezterm' '20240203'))
+New-Item -ItemType Directory -Path $NewApp -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $NewApp 'scoop-install.json'), '{}', (New-Object Text.UTF8Encoding($false)))
+Check 'check-scoop-new-json' 'True' ([string](Test-CheckScoopApp 'wezterm'))
+Check 'check-scoop-old-json' 'True' ([string](Test-CheckScoopApp '7zip'))
+Check 'check-scoop-no-json' 'False' ([string](Test-CheckScoopApp 'vlc'))
 Remove-Item Function:\git, Function:\make
 $env:SCOOP = Join-Path $Work 'scoop-steps'
+
+# SSH server: stub the sshd service and the elevated PowerShell. The stub
+# "starts" sshd unless asked to fail, and writes the error log like the real one.
+. (Join-Path $StepsDir 'sshserver.ps1')
+$global:Sshd = $null
+$global:ElevLog = @()
+$global:ElevFail = $false
+function global:Get-StepSshdService { $global:Sshd }
+function global:Invoke-StepElevated {
+  param([string]$Script = '', [object]$IsAdmin = $null, [string]$StatusPath = '', [string]$Activity = '')
+  $global:ElevLog += $Script
+  $global:ElevStatus = $StatusPath
+  if ($global:ElevFail) {
+    if ($Script -match "WriteAllText\('([^']+\.log)'") { [IO.File]::WriteAllText($Matches[1], 'no capability here') }
+    return 1
+  }
+  $global:Sshd = New-Object PSObject -Property @{ Status = 'Running'; StartType = 'Automatic' }
+  return 0
+}
+# Invoke-CheckStep also checks git and make: stub them so only sshd counts.
+function global:git { }
+function global:make { }
+$SrvRow = New-Object PSObject -Property @{ Action = 'step:ssh-server' }
+Check 'sshd-check-missing' 'False' ([string](Test-CheckItem -Row $SrvRow))
+$SrvPlan = Invoke-SshServerStep -Items @('ssh-server') -Verify | Out-String
+Check 'sshd-verify-plans' 'True|0' (([string]($SrvPlan -match 'would install OpenSSH Server')) + '|' + $global:ElevLog.Count)
+# Not admin and the answer is no: no UAC prompt, and the check says SKIPPED.
+Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $false 3>$null | Out-Null
+Check 'sshd-declined-no-elevation' '0' ([string]$global:ElevLog.Count)
+$DeclOut = Invoke-CheckStep -Catalog @((New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-server'; Label = 'OpenSSH server (sshd)'; Action = 'step:ssh-server'; Selected = $true })) -Missing ([ref]$SkipMissing) | Out-String
+Check 'sshd-declined-check-skipped' 'True|0' (([string]($DeclOut -match '(?m)^SKIPPED OpenSSH server \(sshd\) \(not confirmed\)')) + '|' + $SkipMissing)
+# The question comes only without admin rights: an admin run has no popup.
+Check 'sshd-admin-no-question' 'True' ([string]((Get-Content -Raw (Join-Path $StepsDir 'sshserver.ps1')) -match "if \(-not \(Test-StepAdmin -IsAdmin \`$IsAdmin\)\) \{\s+if \(-not \(Read-StepSshServerConfirm"))
+$SrvOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $true | Out-String
+Check 'sshd-elevates-once' '1' ([string]$global:ElevLog.Count)
+Check 'sshd-script-capability' 'True' ([string]($global:ElevLog[0] -match 'Add-WindowsCapability -Online'))
+Check 'sshd-script-automatic' 'True' ([string]($global:ElevLog[0] -match 'Set-Service -Name sshd -StartupType Automatic'))
+Check 'sshd-script-firewall' 'True' ([string]($global:ElevLog[0] -match 'LocalPort 22'))
+# Both the new rule and the narrowed existing rule allow the local subnet only.
+Check 'sshd-script-local-only' '2' ([string]([regex]::Matches($global:ElevLog[0], '-RemoteAddress LocalSubnet').Count))
+Check 'sshd-ok' 'True' ([string]($SrvOut -match 'sshd running'))
+Check 'sshd-check-ok' 'True' ([string](Test-CheckItem -Row $SrvRow))
+# Already running: nothing elevated again.
+Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null
+Check 'sshd-idempotent' '1' ([string]$global:ElevLog.Count)
+# Installed but stopped or manual start counts as not running.
+$global:Sshd = New-Object PSObject -Property @{ Status = 'Stopped'; StartType = 'Manual' }
+Check 'sshd-stopped-not-ok' 'False' ([string](Test-StepSshdRunning))
+# A failure throws with the elevated script's message.
+$global:ElevFail = $true
+$SrvErr = try { Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null; '' } catch { $_.Exception.Message }
+Check 'sshd-failure-message' 'OpenSSH Server setup failed: no capability here' $SrvErr
+# Exit 2: the feature is staged until a restart. A warning, not a failure,
+# and the check says SKIPPED (restart needed).
+$global:ElevFail = $false
+$global:Sshd = $null
+function global:Invoke-StepElevated { param([string]$Script = '', [object]$IsAdmin = $null, [string]$StatusPath = '', [string]$Activity = '') $global:ElevLog += $Script; return 2 }
+$RestartErr = try { $RestartOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true 3>&1 | Out-String; '' } catch { $_.Exception.Message }
+Check 'sshd-restart-no-throw' '' $RestartErr
+Check 'sshd-restart-warns' 'True' ([string]($RestartOut -match 'needs a restart'))
+$RestartCheck = Invoke-CheckStep -Catalog @((New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-server'; Label = 'OpenSSH server (sshd)'; Action = 'step:ssh-server'; Selected = $true })) -Missing ([ref]$SkipMissing) | Out-String
+Check 'sshd-restart-check-skipped' 'True|0' (([string]($RestartCheck -match '\(restart needed\)')) + '|' + $SkipMissing)
+Remove-Item Function:\git, Function:\make
+# The script exits 2 when the sshd service is missing after the install, and
+# opens the firewall before that, so the rule is in place after the restart.
+$SrvScript = Get-StepSshServerScript -LogPath 'x.log' -StatusPath 'x.status'
+Check 'sshd-script-exit-2' 'True' ([string]($SrvScript -match "Get-Service -Name sshd -ErrorAction SilentlyContinue\)\) \{ exit 2 \}"))
+Check 'sshd-script-firewall-first' 'True' ([string]($SrvScript.IndexOf('LocalPort 22') -lt $SrvScript.IndexOf('exit 2')))
+# The elevated script must parse as PowerShell.
+$ParseErr = $null
+[Management.Automation.PSParser]::Tokenize((Get-StepSshServerScript -LogPath "C:\it's\log.txt"), [ref]$ParseErr) | Out-Null
+Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
+Check 'sshd-script-writes-status' 'True' ([string]($global:ElevLog[-2] -match [regex]::Escape($global:ElevStatus)))
+Check 'sshd-status-file-removed' 'False' ([string](Test-Path -LiteralPath $global:ElevStatus))
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated
+. (Join-Path $StepsDir 'sshserver.ps1')
+
+# Progress bar: the status file the elevated script writes, and the percent.
+$StatusFile = Join-Path $Work 'ssh.status'
+Check 'sshd-status-none' 'True' ([string]($null -eq (Read-StepStatus -Path $StatusFile)))
+[IO.File]::WriteAllText($StatusFile, '85|starting sshd')
+$St = Read-StepStatus -Path $StatusFile
+Check 'sshd-status-read' '85|starting sshd' ([string]$St.Percent + '|' + $St.Text)
+[IO.File]::WriteAllText($StatusFile, 'garbage')
+Check 'sshd-status-garbage' 'True' ([string]($null -eq (Read-StepStatus -Path $StatusFile)))
+Check 'sshd-progress-stage' '85' ([string](Get-StepProgressPercent -Stage 85 -StageSeconds 30))
+Check 'sshd-progress-creeps' 'True' ([string](((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -gt 15) -and ((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -lt (Get-StepProgressPercent -Stage 15 -StageSeconds 180))))
+Check 'sshd-progress-capped' '74' ([string](Get-StepProgressPercent -Stage 15 -StageSeconds 100000))
+# A real child process (not elevated): its stages show up and the exit code
+# comes back. Windows only: it starts powershell.exe -WindowStyle Hidden.
+if ($env:OS -eq 'Windows_NT') {
+  $ElevCode = Invoke-StepElevated -Script ("[IO.File]::WriteAllText('" + $StatusFile + "', '50|half'); Start-Sleep -Milliseconds 700; exit 3") -IsAdmin $true -StatusPath $StatusFile -Activity 'test'
+  Check 'sshd-elevated-exit-code' '3' ([string]$ElevCode)
+} else { Write-Output 'SKIP sshd-elevated-exit-code: needs Windows' }
+
+# WSL: an installed Ubuntu is not installed again (that fails with
+# Wsl/InstallDistro/ERROR_ALREADY_EXISTS).
+$global:WslCalls = @()
+function global:wsl.exe { $global:WslCalls += ($args -join ' '); if ($args -contains '--list') { $global:WslOut } }
+$global:WslOut = @("U`0b`0u`0n`0t`0u`0`r`0", "`0")
+$WslSkip = Invoke-WslStep -Items @('wsl') | Out-String
+Check 'wsl-existing-no-install' '0' ([string]@($global:WslCalls | Where-Object { $_ -like '*--install*' }).Count)
+Check 'wsl-existing-ok' 'True' ([string]($WslSkip -match 'already installed'))
+$global:WslOut = @('docker-desktop'); $global:WslCalls = @()
+Invoke-WslStep -Items @('wsl') 3>$null | Out-Null
+Check 'wsl-install-no-launch' 'True' ([string]($global:WslCalls -contains '--install -d Ubuntu --no-launch'))
+Check 'wsl-check-needs-ubuntu' 'False' ([string](Test-CheckItem -Row (New-Object PSObject -Property @{ Action = 'step:wsl' })))
+Remove-Item Function:\wsl.exe
 
 # setup.ps1 run as its own process must load lib, menu and steps itself.
 $Shell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName

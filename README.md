@@ -146,18 +146,33 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
    - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`
      (only the ones not installed yet), **Flameshot**, and **WezTerm** with
      `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
-   - **WSL (Ubuntu)**: runs `wsl --install -d Ubuntu` only when no `Ubuntu*`
-     distro is registered. The first install needs Administrator and often a
-     reboot; run setup again after it.
+   - **WSL (Ubuntu)**: runs `wsl --install -d Ubuntu --no-launch` only when
+     the `Ubuntu` distro is not installed. The first install needs
+     Administrator and often a restart; then open Ubuntu once to create your
+     Linux user.
+   - **OpenSSH server (sshd)** (off by default): adds the Windows optional
+     feature `OpenSSH.Server`, sets the `sshd` service to start automatically,
+     starts it and allows TCP 22 inbound from the local network only (firewall
+     rule `OpenSSH-Server-In-TCP` with `RemoteAddress LocalSubnet`; the
+     feature's own allow-any rule is narrowed to that). It needs
+     administrator rights: setup first asks `Install SSH server with admin
+     rights? [Y/n]` (no means SKIPPED in the check), then Windows shows one
+     UAC prompt. If Windows stages the feature until a restart, the step says
+     so and the check prints SKIPPED (restart needed); run setup again after
+     the restart to start `sshd`. A progress bar
+     shows each stage while the hidden elevated PowerShell works (the feature
+     install can take a few minutes). Nothing happens when `sshd` is already
+     running.
+
    - **SSH key** (on by default): keeps an existing `~\.ssh\*.pub` pair, else
      runs `ssh-keygen -t ed25519 -f ~\.ssh\id_ed25519` with the OpenSSH
      client built into Windows; ssh-keygen asks for the passphrase. It never
      overwrites a private key: if only `id_ed25519` is there, it rebuilds the
      `.pub` from it. With no console (unattended run) it skips the key.
 5. Checks every ticked item and prints `OK <item>` or `MISSING <item>`
-   (Scoop apps: `scoop\apps\<app>\<version>\install.json` exists; `git`,
-   `make`, `code`: on `PATH`; WSL: an `Ubuntu*` distro is registered;
-   configs: the copied files exist). An SSH
+   (Scoop apps: `scoop\apps\<app>\<version>\scoop-install.json` or the older
+   `install.json` exists; `git`, `make`, `code`: on `PATH`; WSL: the `Ubuntu`
+   distro is installed; configs: the copied files exist). An SSH
    key skipped for lack of a console prints `SKIPPED` and is not an error.
 6. Prints the SSH public key in green as the last line, ready to paste into
    GitHub or a server.

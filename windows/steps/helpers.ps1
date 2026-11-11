@@ -82,4 +82,24 @@ if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)
       return $P.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     } catch { return $false }
   }
+
+  # Names of the installed WSL distros. wsl.exe prints UTF-16 when piped, so
+  # NUL characters, CRs and a BOM are stripped. Empty when WSL is absent.
+  function Get-WslDistroNames {
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return @() }
+    try {
+      $Raw = & wsl.exe --list --quiet
+    } catch { return @() }
+    $Names = @()
+    foreach ($Line in @($Raw)) {
+      $Name = ([string]$Line -replace '[\x00\r\uFEFF]', '').Trim()
+      if ($Name -ne '') { $Names += $Name }
+    }
+    return $Names
+  }
+
+  # True when the Ubuntu distro is installed (not just wsl.exe present).
+  function Test-WslUbuntuInstalled {
+    return ((Get-WslDistroNames) -contains 'Ubuntu')
+  }
 }
