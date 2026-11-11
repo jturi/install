@@ -368,26 +368,153 @@ $CheckCat = New-StepCatalog
 $CheckCat += (New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-key'; Label = 'SSH key (ed25519)'; Default = 'on'; Action = 'step:ssh-key'; Key = 'win-setup.ssh-key'; Selected = $true; New = $false })
 $CheckMissing = -1
 $CheckOut = Invoke-CheckStep -Catalog $CheckCat -HomeDir $SshHome -Missing ([ref]$CheckMissing) | Out-String
-Check 'step-check-ok-git' 'True' ([string]($CheckOut -match '(?m)^OK +git'))
-Check 'step-check-ok-scoop-app' 'True' ([string]($CheckOut -match '(?m)^OK +7-Zip'))
-Check 'step-check-missing-scoop-app' 'True' ([string]($CheckOut -match '(?m)^MISSING VLC'))
-Check 'step-check-ok-sshkey' 'True' ([string]($CheckOut -match '(?m)^OK +SSH key'))
+Check 'step-check-ok-git' 'True' ([string]($CheckOut -match '(?m)^  OK +git'))
+Check 'step-check-ok-scoop-app' 'True' ([string]($CheckOut -match '(?m)^  OK +7-Zip'))
+Check 'step-check-missing-scoop-app' 'True' ([string]($CheckOut -match '(?m)^  MISSING +VLC'))
+Check 'step-check-ok-sshkey' 'True' ([string]($CheckOut -match '(?m)^  OK +SSH key'))
+Check 'step-check-table-summary' 'True' ([string]($CheckOut -match '(?m)^  Summary: \d+ ok, 1 missing, 0 skipped'))
 Check 'step-check-missing-count' '1' ([string]$CheckMissing)
 # No key and no console: SKIPPED, not counted. With a console: MISSING.
 $SkipCat = @($CheckCat | Where-Object { $_.Item -eq 'ssh-key' })
 $SkipHome = Join-Path $Work 'ssh none'
 $SkipMissing = -1
 $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $false | Out-String
-Check 'step-check-sshkey-skipped' 'True|0' (([string]($SkipOut -match '(?m)^SKIPPED SSH key')) + '|' + $SkipMissing)
+Check 'step-check-sshkey-skipped' 'True|0' (([string]($SkipOut -match '(?m)^  SKIPPED +SSH key')) + '|' + $SkipMissing)
 $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $true | Out-String
-Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^MISSING SSH key')) + '|' + $SkipMissing)
-# Current Scoop writes scoop-install.json (older: install.json): both count.
+Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^  MISSING +SSH key')) + '|' + $SkipMissing)
+
+# Scoop writes scoop-install.json (current) or install.json (older): both count.
 $NewApp = Join-Path $env:SCOOP (Join-Path 'apps' (Join-Path 'wezterm' '20240203'))
 New-Item -ItemType Directory -Path $NewApp -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $NewApp 'scoop-install.json'), '{}', (New-Object Text.UTF8Encoding($false)))
 Check 'check-scoop-new-json' 'True' ([string](Test-CheckScoopApp 'wezterm'))
 Check 'check-scoop-old-json' 'True' ([string](Test-CheckScoopApp '7zip'))
 Check 'check-scoop-no-json' 'False' ([string](Test-CheckScoopApp 'vlc'))
+
+# WSL counts only with an installed Ubuntu distro. Stub wsl.exe; its output is
+# UTF-16 when piped, so one case has NUL characters between the letters.
+function global:wsl.exe { $global:WslOut }
+$global:WslOut = @('docker-desktop')
+Check 'wsl-no-ubuntu' 'False' ([string](Test-WslUbuntuInstalled))
+$global:WslOut = @('Ubuntu', 'docker-desktop')
+Check 'wsl-ubuntu' 'True' ([string](Test-WslUbuntuInstalled))
+$global:WslOut = @("U`0b`0u`0n`0t`0u`0`r`0", "`0")
+Check 'wsl-ubuntu-utf16' 'True' ([string](Test-WslUbuntuInstalled))
+$global:WslOut = @()
+Check 'wsl-none' 'False' ([string](Test-CheckItem -Row (New-Object PSObject -Property @{ Action = 'step:wsl' })))
+Remove-Item Function:\wsl.exe
+
+# Git identity: asked once, kept in the config, applied to git's global config.
+# GIT_CONFIG_GLOBAL points git at a scratch file, never the real ~\.gitconfig.
+. (Join-Path $StepsDir 'gitidentity.ps1')
+$SavedGitGlobal = $env:GIT_CONFIG_GLOBAL
+# The check tests stub git as a no-op; this section needs the real one.
+Remove-Item Function:\git -ErrorAction SilentlyContinue
+$GitGlobal = Join-Path $Work 'gitconfig-test'
+$GitEmpty = Join-Path $Work 'gitconfig-empty'
+$Utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($GitEmpty, '', $Utf8)
+[IO.File]::WriteAllText($GitGlobal, '', $Utf8)
+$global:Prompts = @('octo', 'octo@example.com')
+$global:PromptLog = @()
+function global:Read-StepLine($Prompt) {
+  $global:PromptLog += $Prompt
+  $Value = $global:Prompts[0]
+  $global:Prompts = @($global:Prompts | Select-Object -Skip 1)
+  return $Value
+}
+# No console: nothing is asked, nothing is written.
+$env:GIT_CONFIG_GLOBAL = $GitEmpty
+$NoCfg = Join-Path $Work 'gitid-none\.local\bootstrap\config'
+$NoOut = Invoke-GitIdentityStep -ConfigPath $NoCfg -Interactive $false | Out-String
+Check 'git-no-console-no-ask' '0' ([string]$global:PromptLog.Count)
+Check 'git-no-console-warns' 'True' ([string]($NoOut -match 'run setup from a console'))
+# Empty values are saved even without a console, so the next run reads them back.
+Check 'git-no-console-saves-empty' 'True' ([string]((Get-Content -Raw $NoCfg) -match '(?m)^github\.user=\r?$'))
+# Console, nothing saved: asked for both, saved, applied to git.
+$env:GIT_CONFIG_GLOBAL = $GitGlobal
+$GitCfg = Join-Path $Work 'gitid\.local\bootstrap\config'
+$global:Prompts = @('octo', 'octo@example.com')
+Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
+Check 'git-asked-twice' '2' ([string]$global:PromptLog.Count)
+Check 'git-config-user' 'octo' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
+Check 'git-config-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
+Check 'git-global-name' 'octo' (Get-StepGitGlobal 'user.name')
+Check 'git-global-email' 'octo@example.com' (Get-StepGitGlobal 'user.email')
+# Next run: the saved values are offered; Enter keeps them, no new prompt text.
+$global:Prompts = @('', '')
+Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
+Check 'git-keep-asked' '4' ([string]$global:PromptLog.Count)
+Check 'git-keep-user' 'octo' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
+Check 'git-keep-prompt-shows-default' 'True' ([string]($global:PromptLog[2] -match '\[octo\], keep it'))
+# n changes the username; a blank new answer keeps the old one.
+$global:Prompts = @('n', 'newname', '')
+Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
+Check 'git-change-user' 'newname' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
+Check 'git-change-keeps-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
+Check 'git-change-global' 'newname' (Get-StepGitGlobal 'user.name')
+# Config keeps other settings: a catalog flag written earlier survives.
+Set-ConfigValue -Path $GitCfg -Key 'terminals.wezterm' -Value '1'
+Check 'git-config-keeps-flags' '1' (Get-ConfigValue -Path $GitCfg -Key 'terminals.wezterm')
+Check 'git-config-keeps-user' 'newname' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
+# An empty email is saved too (as git.email=), and the next run asks for it.
+$env:GIT_CONFIG_GLOBAL = $GitEmpty
+$PartCfg = Join-Path $Work 'gitid-part\.local\bootstrap\config'
+$global:Prompts = @('pc_win', '')
+$global:PromptLog = @()
+$PartOut = Invoke-GitIdentityStep -ConfigPath $PartCfg -Interactive $true | Out-String
+Check 'git-partial-user-saved' 'pc_win' (Get-ConfigValue -Path $PartCfg -Key 'github.user')
+# The email can be left empty: one prompt, no retry.
+Check 'git-email-skip-one-prompt' '2' ([string]$global:PromptLog.Count)
+Check 'git-email-skip-no-retry' 'False' ([string]($PartOut -match 'required'))
+Check 'git-empty-email-line' 'True' ([string]((Get-Content -Raw $PartCfg) -match '(?m)^git\.email=\r?$'))
+Check 'git-partial-warns' 'True' ([string]($PartOut -match 'saved without a value'))
+$global:Prompts = @('', 'a@b.c')
+$global:PromptLog = @()
+Invoke-GitIdentityStep -ConfigPath $PartCfg -Interactive $true | Out-Null
+Check 'git-empty-email-asked-only' '2' ([string]$global:PromptLog.Count)
+Check 'git-partial-email-saved' 'a@b.c' (Get-ConfigValue -Path $PartCfg -Key 'git.email')
+Check 'git-partial-user-kept' 'pc_win' (Get-ConfigValue -Path $PartCfg -Key 'github.user')
+# No console: nothing is asked, saved values are still read and written back.
+$global:PromptLog = @()
+Invoke-GitIdentityStep -ConfigPath $PartCfg -Interactive $false | Out-Null
+Check 'git-no-console-reads-saved' '0' ([string]$global:PromptLog.Count)
+# -NoPrompt (the call after Scoop): applies the saved values, never asks.
+$global:PromptLog = @()
+Invoke-GitIdentityStep -ConfigPath $PartCfg -Interactive $true -NoPrompt | Out-Null
+Check 'git-noprompt-no-ask' '0' ([string]$global:PromptLog.Count)
+$env:GIT_CONFIG_GLOBAL = $GitGlobal
+Remove-Item Function:\Read-StepLine
+if ($SavedGitGlobal) { $env:GIT_CONFIG_GLOBAL = $SavedGitGlobal } else { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue }
+function global:git { }
+
+# VS Code: the code command is found on PATH or in Scoop's own folder.
+$VsSaved = $env:SCOOP
+$env:SCOOP = Join-Path $Work 'scoop-vscode'
+$VsCmd = Join-Path $env:SCOOP 'apps\vscode\current\bin\code.cmd'
+New-Item -ItemType Directory -Path (Split-Path $VsCmd) -Force | Out-Null
+[IO.File]::WriteAllText($VsCmd, '', $Utf8)
+. (Join-Path $StepsDir 'vscode.ps1')
+Check 'vscode-cli-found' 'True' ([string]((Get-VscodeStepCli) -ne ''))
+$env:SCOOP = $VsSaved
+
+# WSL install that is still finishing adds a TODO line for the end of the run.
+$global:StepTodos = @()
+function global:wsl.exe { }
+Invoke-WslStep -Items @() | Out-Null
+Remove-Item Function:\wsl.exe
+Check 'wsl-todo-added' 'True' ([string]((@($global:StepTodos) -join '|') -match 'WSL Ubuntu is not ready yet'))
+
+# A fresh install never launches Ubuntu here (its first-run prompts garble in
+# this run); the user is told to open it once instead.
+$global:StepTodos = @()
+$global:WslArgs = @()
+$global:WslInstalled = $false
+function global:wsl.exe { if ($args -contains '--install') { $global:WslArgs = $args; $global:WslInstalled = $true; return }; if ($global:WslInstalled) { 'Ubuntu' } }
+Invoke-WslStep -Items @() | Out-Null
+Remove-Item Function:\wsl.exe
+Check 'wsl-no-launch' 'True' ([string]($global:WslArgs -contains '--no-launch'))
+Check 'wsl-first-run-todo' 'True' ([string]((@($global:StepTodos) -join '|') -match 'open Ubuntu'))
 Remove-Item Function:\git, Function:\make
 $env:SCOOP = Join-Path $Work 'scoop-steps'
 
@@ -547,6 +674,30 @@ $FailOut = Invoke-Setup -Yes -Config $FailCfg2 -CatalogPath $FailCatalog -HomeDi
 $FailCode = @($FailOut)[(@($FailOut)).Count - 1]
 Check 'setup-step-failure-exit' '1' ([string]$FailCode)
 . (Join-Path $Root (Join-Path 'windows' (Join-Path 'steps' 'vscode.ps1')))
+
+# Like setup.sh: a version header, then the plan, one line per group.
+$PlanCat = Join-Path $Work 'plancat.txt'
+[IO.File]::WriteAllText($PlanCat, ("dev-tools|7zip|7-Zip|windows|on|scoop:main/7zip`n" + "dev-tools|curl|curl|windows|off|scoop:main/curl`n" + "win-setup|wsl|WSL (Ubuntu)|windows|off|step:wsl`n"), (New-Object Text.UTF8Encoding($false)))
+$PlanOut = @(Invoke-Setup -DryRun -Config (Join-Path $Work 'plan-config') -CatalogPath $PlanCat -HomeDir $DryHome -StepsDir $StepsDir | ForEach-Object { [string]$_ })
+Check 'setup-header-version' 'True' ([string](($PlanOut -join "`n") -match '==> install .+, PowerShell \d'))
+Check 'setup-header-platform' 'True' ([string]($PlanOut -contains '==> Detected platform: windows'))
+Check 'setup-plan-install' 'True' ([string]($PlanOut -contains '  install dev-tools     7-Zip'))
+Check 'setup-plan-skip' 'True' ([string]($PlanOut -contains '  skip    dev-tools     curl'))
+Check 'setup-plan-skip-only' 'True' ([string]($PlanOut -contains '  skip    win-setup     WSL (Ubuntu)'))
+Check 'setup-plan-before-steps' 'True' ([string]([Array]::IndexOf($PlanOut, '==> Plan') -lt [Array]::IndexOf($PlanOut, 'Dry run: nothing changed.')))
+
+# A "no" at Go ahead? after the menu saves and installs nothing.
+$StubDir = Join-Path $Work 'confirm-stub'
+function Test-MenuAvailable { return $true }
+function Show-Menu { param([object[]]$Catalog) return 'continue' }
+function Read-SetupConfirm { param([string]$Question) return $false }
+$global:ScoopLog = @()
+$NoOut = @(Invoke-Setup -Config (Join-Path $StubDir 'config') -CatalogPath $PlanCat -HomeDir $DryHome -StepsDir $StepsDir | ForEach-Object { [string]$_ })
+Check 'setup-confirm-no-nothing' 'True' ([string]($NoOut -contains 'Nothing saved, nothing installed.'))
+Check 'setup-confirm-no-save' 'False' ([string](Test-Path (Join-Path $StubDir 'config')))
+Check 'setup-confirm-no-steps' '0' ([string]$global:ScoopLog.Count)
+. (Join-Path $Root (Join-Path 'windows' 'menu.ps1'))
+. (Join-Path $Root 'setup.ps1')
 
 $ElevMsg = try { Invoke-Setup -Yes -Config $FailCfg2 -ConfigExplicit -CatalogPath $FailCatalog -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $true -ScoopPresent $false | Out-Null; '' } catch { $_.Exception.Message }
 Check 'setup-elevated-scoop-missing' 'True' ([string]($ElevMsg -match 'Administrator|Scoop'))

@@ -58,6 +58,51 @@ function Get-SetupSelectedItems {
   return $Out
 }
 
+# Where this copy came from, as setup.sh prints it: git describe in a clone,
+# else the first line of the .source stamp bootstrap writes, else unknown.
+function Get-SetupSourceVersion {
+  param([string]$Root = '')
+  if (Test-Path (Join-Path $Root '.git')) {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+      try {
+        $global:LASTEXITCODE = 0
+        $Desc = [string](& git -C $Root describe --always --dirty 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $Desc.Trim() -ne '') { return $Desc.Trim() }
+      } catch { }
+    }
+  }
+  $Stamp = Join-Path $Root '.source'
+  if (Test-Path $Stamp) {
+    $First = [string](@([IO.File]::ReadAllLines($Stamp)) | Select-Object -First 1)
+    if ($First.Trim() -ne '') { return $First.Trim() }
+  }
+  return 'unknown version'
+}
+
+# What this run will do, one group per line, as setup.sh prints it.
+function Write-SetupPlan {
+  param([object[]]$Catalog = @())
+  Write-Output '==> Plan'
+  $Groups = @()
+  foreach ($Row in $Catalog) { if ($Groups -notcontains $Row.Group) { $Groups += $Row.Group } }
+  foreach ($Group in $Groups) {
+    $Install = @(); $Skip = @()
+    foreach ($Row in $Catalog) {
+      if ($Row.Group -ne $Group) { continue }
+      if ($Row.Selected) { $Install += $Row.Label } else { $Skip += $Row.Label }
+    }
+    if ($Install.Count -gt 0) { Write-Output ('  install {0,-13} {1}' -f $Group, ($Install -join ', ')) }
+    if ($Skip.Count -gt 0) { Write-Output ('  skip    {0,-13} {1}' -f $Group, ($Skip -join ', ')) }
+  }
+}
+
+# Ask before a run that came from the menu. Enter or y/Y means yes.
+function Read-SetupConfirm {
+  param([string]$Question = 'Go ahead?')
+  $Reply = Read-Host ($Question + ' [Y/n]')
+  return ($null -eq $Reply -or $Reply.Trim() -eq '' -or $Reply.Trim() -match '^[Yy]')
+}
+
 function Invoke-Setup {
   param(
     [switch]$Yes = $false,
@@ -78,6 +123,9 @@ function Invoke-Setup {
   if (-not $Yes -and -not $DryRun -and -not $Verify) { $ShowMenu = $true }
   if ($Select) { $ShowMenu = $true }
   $Cfg = Get-SetupConfigPath -Explicit $Config -Home_ $HomeDir
+  $PsVer = [string]$PSVersionTable.PSVersion
+  Write-Output ('==> install ' + (Get-SetupSourceVersion -Root $PSScriptRoot) + ', PowerShell ' + $PsVer)
+  Write-Output '==> Detected platform: windows'
   $Catalog = Import-Catalog -Path $CatalogPath
   $Extra = Import-Selection -Path $Cfg -Catalog $Catalog
   $menuShown = $false
@@ -87,6 +135,8 @@ function Invoke-Setup {
     $menuShown = $true
     if ($Choice -ne 'continue') { Write-Output 'Nothing saved, nothing installed.'; return 0 }
   }
+  Write-SetupPlan -Catalog $Catalog
+  if ($menuShown -and -not (Read-SetupConfirm 'Go ahead?')) { Write-Output 'Nothing saved, nothing installed.'; return 0 }
   if ($ConfigExplicit -and $Yes -and -not $menuShown) {
     if (-not (Test-Path $Cfg)) { throw "config file not found: $Cfg" }
   }
@@ -106,6 +156,7 @@ function Invoke-Setup {
   if ($DryRun -or $Verify) {
     Invoke-PreflightStep -Catalog $Catalog -CatalogPath $CatalogPath
     Invoke-ScoopStep -Catalog $Catalog -Verify
+    Invoke-GitIdentityStep -ConfigPath $Cfg -Verify
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'profile'
     if ($Items.Count -gt 0) { Invoke-ProfileStep -Items $Items -Verify }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'hotkeys'
@@ -130,31 +181,44 @@ function Invoke-Setup {
     Write-Output ("Selection saved to " + $Cfg)
   }
   if ($Select) { Write-Output 'Done.'; return 0 }
+  $Watch = [Diagnostics.Stopwatch]::StartNew()
+  # Right after the selection: ask for the GitHub username and email (once).
+  Write-StepSection 'Git identity'
+  try { Invoke-GitIdentityStep -ConfigPath $Cfg } catch { Write-StepWarn ('git identity: ' + $_.Exception.Message) }
   Invoke-PreflightStep -Catalog $Catalog -CatalogPath $CatalogPath
   $Failures = @()
+  Write-StepSection 'Scoop'
   try { Invoke-ScoopStep -Catalog $Catalog } catch { $Failures += ('scoop: ' + $_.Exception.Message) }
+  # git is installed now: apply the saved identity (no prompt).
+  try { Invoke-GitIdentityStep -ConfigPath $Cfg -NoPrompt } catch { $Failures += ('git identity: ' + $_.Exception.Message) }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'profile'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'PowerShell profile'
     try { Invoke-ProfileStep -Items $Items } catch { $Failures += ('profile: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'hotkeys'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'Hotkeys'
     try { Invoke-HotkeysStep -Items $Items -HotkeysHome $HomeDir } catch { $Failures += ('hotkeys: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'vscode'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'VS Code'
     try { Invoke-VscodeStep -Items $Items } catch { $Failures += ('vscode: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'flameshot'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'Flameshot'
     try { Invoke-FlameshotStep -Items $Items } catch { $Failures += ('flameshot: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'wsl'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'WSL'
     try { Invoke-WslStep -Items $Items } catch { $Failures += ('wsl: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'wezterm'
   if ($Items.Count -gt 0) {
+    Write-StepSection 'WezTerm'
     try { Invoke-WeztermStep -Items $Items -WeztermHome $HomeDir } catch { $Failures += ('wezterm: ' + $_.Exception.Message) }
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-server'
@@ -163,17 +227,29 @@ function Invoke-Setup {
   }
   $SshItems = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
   if ($SshItems.Count -gt 0) {
+    Write-StepSection 'SSH key'
     try { Invoke-SshKeyStep -Items $SshItems -HomeDir $HomeDir } catch { $Failures += ('ssh-key: ' + $_.Exception.Message) }
   }
   $Missing = 0
   try { Invoke-CheckStep -Catalog $Catalog -HomeDir $HomeDir -Missing ([ref]$Missing) } catch { $Failures += ('check: ' + $_.Exception.Message) }
   if ($Missing -gt 0) { $Failures += ('check: ' + $Missing + ' item(s) missing') }
-  foreach ($F in $Failures) { Write-Warning $F }
-  if ($Failures.Count -eq 0) { Write-Output 'Done.' }
+  Write-StepSection 'Summary'
+  $Took = $Watch.Elapsed.ToString('mm\:ss')
+  if ($Failures.Count -eq 0) {
+    Write-StepOk ('All selected items are in place (' + $Took + ')')
+  } else {
+    foreach ($F in $Failures) { Write-StepWarn $F }
+    Write-Output ('  ' + $Failures.Count + ' problem(s) in ' + $Took + '. Fix them above, then run setup again.')
+  }
   # Last, so the key is the final thing on screen.
   if ($SshItems.Count -gt 0) {
-    try { Show-StepSshKey -HomeDir $HomeDir } catch { Write-Warning ('ssh-key: ' + $_.Exception.Message) }
+    try {
+      Show-StepSshKey -HomeDir $HomeDir
+      Add-StepTodo 'Save github ssh key to: https://github.com/settings/keys'
+    } catch { Write-StepWarn ('ssh-key: ' + $_.Exception.Message) }
   }
+  # Manual follow-ups go last, in yellow.
+  Write-StepTodos
   if ($Failures.Count -gt 0) { return 1 }
   return 0
 }

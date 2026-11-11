@@ -31,9 +31,9 @@ function Invoke-ScoopStep {
   foreach ($B in $Buckets) {
     try { Add-StepScoopBucket $B } catch { Write-StepWarn $_.Exception.Message; $BadBuckets += $B }
   }
-  $global:LASTEXITCODE = 0
-  scoop update
-  if ($LASTEXITCODE) { Write-StepWarn "scoop update failed (exit $LASTEXITCODE); installing from the current buckets" }
+  Write-StepInfo 'updating Scoop and buckets'
+  $Upd = Invoke-StepScoop @('update')
+  if ($Upd.Code) { Write-StepWarn ("scoop update failed (exit " + $Upd.Code + "); installing from the current buckets") }
   $Failed = @()
   foreach ($W in $Wanted) {
     if ($BadBuckets -contains $W.Bucket) { $Failed += ($W.Bucket + '/' + $W.App); continue }
@@ -41,5 +41,4 @@ function Invoke-ScoopStep {
     catch { Write-StepWarn $_.Exception.Message; $Failed += ($W.Bucket + '/' + $W.App) }
   }
   if ($Failed.Count -gt 0) { throw ('scoop install failed: ' + ($Failed -join ', ')) }
-  Write-StepOk ("scoop: " + ($Wanted.Count + 1) + " apps")
 }

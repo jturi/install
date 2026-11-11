@@ -1,7 +1,8 @@
 # Check step: after the run, test that every ticked item is really there and
 # print one "OK <label>", "MISSING <label>" or "SKIPPED <label>" line each.
 # Scoop apps count as installed when scoop\apps\<app>\<version>\scoop-install.json
-# (or install.json, older Scoop) exists; commands must be on PATH. An SSH key that
+# (or install.json, older Scoop) exists; commands must be on PATH. WSL counts
+# only when the Ubuntu distro is installed. An SSH key that
 # was skipped for lack of a console is SKIPPED, not missing.
 # Puts the number of missing items in -Missing (a [ref]): setup.ps1 reads an
 # int on the pipeline as its exit code. ASCII only, PS 5.1 syntax only.
@@ -45,37 +46,41 @@ function Test-CheckItem {
   return $true
 }
 
-function Write-CheckLine($Ok, $Label) {
-  if ($Ok) { Write-Output ('OK      ' + $Label) } else { Write-Output ('MISSING ' + $Label) }
+# One table row: status, item and group in fixed columns.
+function Format-CheckRow($Status, $Label, $Group) {
+  return ('  ' + ([string]$Status).PadRight(10) + ([string]$Label).PadRight(26) + [string]$Group).TrimEnd()
 }
 
 function Invoke-CheckStep {
   param([object[]]$Catalog = @(), [string]$HomeDir = '', [string]$DocumentsDir = '', $Missing = $null, [object]$Interactive = $null)
-  Write-Output ''
-  Write-StepInfo 'Check'
-  $Count = 0
-  foreach ($Name in @('git', 'make')) {
-    $Ok = Test-CheckCommand $Name
-    Write-CheckLine $Ok $Name
-    if (-not $Ok) { $Count++ }
-  }
+  Write-StepSection 'Check'
+  $Lines = @()
+  $Counts = @{ OK = 0; MISSING = 0; SKIPPED = 0 }
+  $Rows = @()
+  foreach ($Name in @('git', 'make')) { $Rows += , @{ Label = $Name; Group = 'base'; Ok = (Test-CheckCommand $Name); Skip = $false } }
   foreach ($Row in $Catalog) {
     if (-not $Row.Selected) { continue }
     # A check that throws counts as missing; it must not stop the others.
     $Ok = $false
     try { $Ok = [bool](Test-CheckItem -Row $Row -HomeDir $HomeDir -DocumentsDir $DocumentsDir) }
     catch { Write-StepWarn ('check ' + $Row.Label + ': ' + $_.Exception.Message) }
-    if (-not $Ok -and $Row.Action -eq 'step:ssh-key' -and -not (Test-StepSshConsole -Interactive $Interactive)) {
-      Write-Output ('SKIPPED ' + $Row.Label + ' (no console)')
-      continue
-    }
-    # Declined, or staged until a restart: not an error of this run.
-    if (-not $Ok -and $Row.Action -eq 'step:ssh-server' -and $script:StepSshServerSkip) {
-      Write-Output ('SKIPPED ' + $Row.Label + ' (' + $script:StepSshServerSkip + ')')
-      continue
-    }
-    Write-CheckLine $Ok $Row.Label
-    if (-not $Ok) { $Count++ }
+    $Skip = ''
+    # SKIPPED, not MISSING: no console for the SSH key, or the SSH server was
+    # declined or is staged until a restart.
+    if (-not $Ok -and $Row.Action -eq 'step:ssh-key' -and -not (Test-StepSshConsole -Interactive $Interactive)) { $Skip = 'no console' }
+    elseif (-not $Ok -and $Row.Action -eq 'step:ssh-server' -and $script:StepSshServerSkip) { $Skip = [string]$script:StepSshServerSkip }
+    $Rows += , @{ Label = $Row.Label; Group = $Row.Group; Ok = $Ok; Skip = $Skip }
   }
-  if ($Missing -is [ref]) { $Missing.Value = $Count }
+  Write-Output (Format-CheckRow 'Status' 'Item' 'Group')
+  Write-Output (Format-CheckRow '------' '----' '-----')
+  foreach ($R in $Rows) {
+    if ($R.Skip) { $Status = 'SKIPPED'; $Label = $R.Label + ' (' + $R.Skip + ')' }
+    elseif ($R.Ok) { $Status = 'OK'; $Label = $R.Label }
+    else { $Status = 'MISSING'; $Label = $R.Label }
+    $Counts[$Status]++
+    Write-Output (Format-CheckRow $Status $Label $R.Group)
+  }
+  Write-Output ''
+  Write-Output ('  Summary: ' + $Counts.OK + ' ok, ' + $Counts.MISSING + ' missing, ' + $Counts.SKIPPED + ' skipped')
+  if ($Missing -is [ref]) { $Missing.Value = $Counts.MISSING }
 }

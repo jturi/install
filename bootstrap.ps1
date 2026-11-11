@@ -110,6 +110,18 @@
       New-Item -ItemType Directory -Path (Split-Path $dir) -Force | Out-Null
       Move-Item $top.FullName $dir
       Ok "$dir ($repo@$commit)"
+      # Short hash, commit date and first message line of the downloaded commit.
+      # Informational only: a failed lookup must not stop the install.
+      try {
+        $h = @{ 'User-Agent' = 'install-bootstrap' }
+        if ($token) { $h['Authorization'] = "Bearer $token" }
+        $info = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$commit" -Headers $h -ErrorAction Stop
+        $short = ([string]$info.sha).Substring(0, 7)
+        $when = ([DateTimeOffset]::Parse($info.commit.committer.date)).ToLocalTime().ToString('yyyy-MM-dd HH:mm')
+        $subject = (([string]$info.commit.message) -split "`n")[0].Trim()
+        Ok "commit $short from $($when): $subject"
+      }
+      catch { Write-Warning "could not read the commit date: $($_.Exception.Message)" }
     }
     finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 

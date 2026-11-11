@@ -35,10 +35,35 @@ for sh in sh bash zsh; do
   check "bootstrap-${sh}-runs" run
   check "bootstrap-${sh}-setup" grep -q 'Detected distro family' "${TMP}/out"
   check "bootstrap-${sh}-extract" test -f "${home}/install/setup.sh"
+  check "bootstrap-${sh}-dryrun-no-shell" sh -c "! grep -q 'starting a new' '${TMP}/out'"
   run
   run
   check "bootstrap-${sh}-backups" test "$(find "${home}" -maxdepth 1 -name 'install.bak.*' | wc -l)" -eq 2
 done
+
+# After a real run with a terminal, bootstrap starts a fresh interactive shell
+# (so ~/.bashrc and the new aliases load). Stub setup.sh and $SHELL; `script`
+# gives the run a /dev/tty.
+if command -v script >/dev/null 2>&1; then
+  mkdir -p "${TMP}/stub/jturi-install-abc"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP}/stub/jturi-install-abc/setup.sh"
+  tar -czf "${TMP}/stub.tgz" -C "${TMP}/stub" jturi-install-abc
+  printf '#!/bin/sh\necho "$@" >"%s/shell-args"\n' "${TMP}" >"${TMP}/fakeshell"
+  chmod +x "${TMP}/fakeshell"
+  shell_run() {
+    HOME="${TMP}/home-shell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x \
+      script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >"${TMP}/shell-out" 2>&1
+  }
+  check bootstrap-new-shell-runs shell_run
+  check bootstrap-new-shell-interactive grep -qx -- '-i' "${TMP}/shell-args"
+  rm -f "${TMP}/shell-args"
+  no_shell_run() {
+    HOME="${TMP}/home-noshell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x BOOTSTRAP_NO_SHELL=1 \
+      script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >/dev/null 2>&1
+  }
+  check bootstrap-no-shell-opt-out no_shell_run
+  check bootstrap-no-shell-opt-out-none test ! -e "${TMP}/shell-args"
+fi
 
 bad() {
   HOME="${TMP}/bad" BOOTSTRAP_URL="file://${TMP}/missing.tgz" GITHUB_TOKEN=x \
