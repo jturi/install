@@ -151,8 +151,14 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      starts it and allows TCP 22 inbound from the local network only (firewall
      rule `OpenSSH-Server-In-TCP` with `RemoteAddress LocalSubnet`; the
      feature's own allow-any rule is narrowed to that). It needs
-     administrator rights, so Windows shows one UAC prompt. Nothing happens
-     when `sshd` is already running.
+     administrator rights: setup first asks `Install SSH server with admin
+     rights? [Y/n]` (no means SKIPPED in the check), then Windows shows one
+     UAC prompt. If Windows stages the feature until a restart, the step says
+     so and the check prints SKIPPED (restart needed); run setup again after
+     the restart to start `sshd`. A progress bar
+     shows each stage while the hidden elevated PowerShell works (the feature
+     install can take a few minutes). Nothing happens when `sshd` is already
+     running.
 
    - **SSH key** (on by default): keeps an existing `~\.ssh\*.pub` pair, else
      runs `ssh-keygen -t ed25519 -f ~\.ssh\id_ed25519` with the OpenSSH
@@ -160,7 +166,8 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      overwrites a private key: if only `id_ed25519` is there, it rebuilds the
      `.pub` from it. With no console (unattended run) it skips the key.
 5. Checks every ticked item and prints `OK <item>` or `MISSING <item>`
-   (Scoop apps: `scoop\apps\<app>\<version>\install.json` exists; `git`,
+   (Scoop apps: `scoop\apps\<app>\<version>\scoop-install.json` or the older
+   `install.json` exists; `git`,
    `make`, `code`, `wsl`: on `PATH`; configs: the copied files exist). An SSH
    key skipped for lack of a console prints `SKIPPED` and is not an error.
 6. Prints the SSH public key in green as the last line, ready to paste into
