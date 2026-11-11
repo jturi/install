@@ -364,6 +364,53 @@ Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^MISS
 Remove-Item Function:\git, Function:\make
 $env:SCOOP = Join-Path $Work 'scoop-steps'
 
+# SSH server: stub the sshd service and the elevated PowerShell. The stub
+# "starts" sshd unless asked to fail, and writes the error log like the real one.
+. (Join-Path $StepsDir 'sshserver.ps1')
+$global:Sshd = $null
+$global:ElevLog = @()
+$global:ElevFail = $false
+function global:Get-StepSshdService { $global:Sshd }
+function global:Invoke-StepElevated {
+  param([string]$Script = '', [object]$IsAdmin = $null)
+  $global:ElevLog += $Script
+  if ($global:ElevFail) {
+    if ($Script -match "WriteAllText\('([^']+)'") { [IO.File]::WriteAllText($Matches[1], 'no capability here') }
+    return 1
+  }
+  $global:Sshd = New-Object PSObject -Property @{ Status = 'Running'; StartType = 'Automatic' }
+  return 0
+}
+$SrvRow = New-Object PSObject -Property @{ Action = 'step:ssh-server' }
+Check 'sshd-check-missing' 'False' ([string](Test-CheckItem -Row $SrvRow))
+$SrvPlan = Invoke-SshServerStep -Items @('ssh-server') -Verify | Out-String
+Check 'sshd-verify-plans' 'True|0' (([string]($SrvPlan -match 'would install OpenSSH Server')) + '|' + $global:ElevLog.Count)
+$SrvOut = Invoke-SshServerStep -Items @('ssh-server') | Out-String
+Check 'sshd-elevates-once' '1' ([string]$global:ElevLog.Count)
+Check 'sshd-script-capability' 'True' ([string]($global:ElevLog[0] -match 'Add-WindowsCapability -Online'))
+Check 'sshd-script-automatic' 'True' ([string]($global:ElevLog[0] -match 'Set-Service -Name sshd -StartupType Automatic'))
+Check 'sshd-script-firewall' 'True' ([string]($global:ElevLog[0] -match 'LocalPort 22'))
+# Both the new rule and the narrowed existing rule allow the local subnet only.
+Check 'sshd-script-local-only' '2' ([string]([regex]::Matches($global:ElevLog[0], '-RemoteAddress LocalSubnet').Count))
+Check 'sshd-ok' 'True' ([string]($SrvOut -match 'sshd running'))
+Check 'sshd-check-ok' 'True' ([string](Test-CheckItem -Row $SrvRow))
+# Already running: nothing elevated again.
+Invoke-SshServerStep -Items @('ssh-server') | Out-Null
+Check 'sshd-idempotent' '1' ([string]$global:ElevLog.Count)
+# Installed but stopped or manual start counts as not running.
+$global:Sshd = New-Object PSObject -Property @{ Status = 'Stopped'; StartType = 'Manual' }
+Check 'sshd-stopped-not-ok' 'False' ([string](Test-StepSshdRunning))
+# A failure throws with the elevated script's message.
+$global:ElevFail = $true
+$SrvErr = try { Invoke-SshServerStep -Items @('ssh-server') | Out-Null; '' } catch { $_.Exception.Message }
+Check 'sshd-failure-message' 'OpenSSH Server setup failed: no capability here' $SrvErr
+# The elevated script must parse as PowerShell.
+$ParseErr = $null
+[Management.Automation.PSParser]::Tokenize((Get-StepSshServerScript -LogPath "C:\it's\log.txt"), [ref]$ParseErr) | Out-Null
+Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated
+. (Join-Path $StepsDir 'sshserver.ps1')
+
 # setup.ps1 run as its own process must load lib, menu and steps itself.
 $Shell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
 $SoloHome = Join-Path $Work 'solo home'

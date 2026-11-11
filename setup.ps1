@@ -118,6 +118,8 @@ function Invoke-Setup {
     if ($Items.Count -gt 0) { Invoke-WslStep -Items $Items -Verify }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'wezterm'
     if ($Items.Count -gt 0) { Invoke-WeztermStep -Items $Items -Verify -WeztermHome $HomeDir }
+    $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-server'
+    if ($Items.Count -gt 0) { Invoke-SshServerStep -Items $Items -Verify }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
     if ($Items.Count -gt 0) { Invoke-SshKeyStep -Items $Items -Verify -HomeDir $HomeDir }
     if ($DryRun) { Write-Output 'Dry run: nothing changed.' }
@@ -154,6 +156,10 @@ function Invoke-Setup {
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'wezterm'
   if ($Items.Count -gt 0) {
     try { Invoke-WeztermStep -Items $Items -WeztermHome $HomeDir } catch { $Failures += ('wezterm: ' + $_.Exception.Message) }
+  }
+  $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-server'
+  if ($Items.Count -gt 0) {
+    try { Invoke-SshServerStep -Items $Items -IsAdmin $IsAdmin } catch { $Failures += ('ssh-server: ' + $_.Exception.Message) }
   }
   $SshItems = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
   if ($SshItems.Count -gt 0) {
