@@ -1,0 +1,3 @@
+# VS Code extensions installed by windows/steps/vscode.ps1, one per line.
+# Lines starting with # are ignored.
+ms-vscode.powershell

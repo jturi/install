@@ -7,12 +7,12 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help
-.PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default
+.PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default windows
 .PHONY: lint test test-bash32 test-docker test-windows check test-all
 .PHONY: sync-dotfiles
 
 SHELL_FILES := setup.sh lib/*.sh tests/*.sh
-PS1_FILES := windows/lib.ps1 windows/menu.ps1 tests/test_windows.ps1 tests/check_ps1.ps1
+PS1_FILES := setup.ps1 windows/lib.ps1 windows/menu.ps1 windows/steps/*.ps1 tests/test_windows.ps1 tests/check_ps1.ps1
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 
@@ -81,9 +81,16 @@ test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash
 test-docker: ## Real setup.sh run in Arch/Ubuntu/Debian/Fedora/Rocky/Alma containers
 	bash tests/docker_matrix.sh
 
-test-windows: ## Run the PowerShell tests on Windows (needs powershell.exe)
-	w=$$(wslpath -w tests/test_windows.ps1 2>/dev/null || echo tests/test_windows.ps1); \
-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$w"
+test-windows: ## Run the PowerShell tests on Windows (needs powershell.exe), else a container
+	@if command -v powershell.exe >/dev/null 2>&1; then \
+	  w=$$(wslpath -w tests/test_windows.ps1 2>/dev/null || echo tests/test_windows.ps1); \
+	  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$w"; \
+	else \
+	  docker run --rm -v "$$(pwd)":/w -w /w -e USERPROFILE=/tmp/u -e HOME=/tmp/h -e TEMP=/tmp mcr.microsoft.com/powershell:7.4-alpine-3.20 pwsh -NoProfile -File tests/test_windows.ps1; \
+	fi
+
+windows: ## Run setup.ps1 from WSL (needs powershell.exe)
+	@w=$$(wslpath -w setup.ps1); powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$w" $(ARGS)
 
 check: lint test ## lint + unit tests (fast)
 

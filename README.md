@@ -21,6 +21,29 @@ mkdir -p ~/install && wget -qO- https://github.com/jturi/install/archive/refs/he
 Add options at the end, for example `... && ~/install/setup.sh --yes`.
 The curl line also works on macOS (curl and tar are built in).
 
+## Windows quick start
+
+Native Windows uses `setup.ps1` (PowerShell 5.1+). One line, no git needed
+(downloads the repo zip to `~/install` and runs it):
+
+```powershell
+mkdir ~/install -Force; Invoke-WebRequest -Uri https://github.com/jturi/install/archive/refs/heads/main.zip -OutFile "$env:TEMP/install.zip"; Expand-Archive -Force "$env:TEMP/install.zip" ~/install; ~/install/setup.ps1
+```
+
+Or clone it and run with bypassed execution policy:
+
+```powershell
+git clone https://github.com/jturi/install.git ~/repos/install
+cd ~/repos/install
+powershell -ExecutionPolicy Bypass -File ./setup.ps1 -DryRun
+```
+
+Flags mirror `setup.sh`: `-Yes` (no menu: saved selection, else defaults),
+`-DryRun` (plan only, writes nothing), `-Select` (menu then save only),
+`-Config <path>` (use that file instead of
+`%USERPROFILE%\.local\bootstrap\config`), `-Verify` (read-only pre-checks,
+changes nothing).
+
 Or clone it:
 
 ```sh

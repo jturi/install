@@ -148,6 +148,98 @@ Check 'scooproot-home' (Join-Path $env:HOME 'scoop') (Get-ScoopRoot -ScoopComman
 if ($SavedScoop) { $env:SCOOP = $SavedScoop }
 $env:USERPROFILE = $SavedProfile
 
+# Task 8: steps and setup.ps1. Stub scoop before dot-sourcing.
+function global:scoop { param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ScoopArgs) $global:ScoopLog += ($ScoopArgs -join ' '); $global:ScoopBuckets += ($ScoopArgs -join ' ') }
+
+function cmp-bytes($A, $B) {
+  if (-not (Test-Path $A)) { return 'missing-a' }
+  if (-not (Test-Path $B)) { return 'missing-b' }
+  $X = [IO.File]::ReadAllBytes($A)
+  $Y = [IO.File]::ReadAllBytes($B)
+  if ($X.Length -ne $Y.Length) { return 'length' }
+  for ($i = 0; $i -lt $X.Length; $i++) { if ($X[$i] -ne $Y[$i]) { return 'differs' } }
+  return 'same'
+}
+
+function New-StepCatalog {
+  $Rows = @()
+  $Rows += (New-Object PSObject -Property @{ Group = 'dev-tools'; Item = '7zip'; Label = '7-Zip'; Default = 'on'; Action = 'scoop:main/7zip'; Key = 'dev-tools.7zip'; Selected = $true; New = $false })
+  $Rows += (New-Object PSObject -Property @{ Group = 'win-apps'; Item = 'vlc'; Label = 'VLC'; Default = 'off'; Action = 'scoop:extras/vlc'; Key = 'win-apps.vlc'; Selected = $false; New = $false })
+  return $Rows
+}
+
+$StepsDir = Join-Path (Join-Path $Root 'windows') 'steps'
+. (Join-Path $StepsDir 'scoop.ps1')
+. (Join-Path $StepsDir 'preflight.ps1')
+. (Join-Path $StepsDir 'vscode.ps1')
+. (Join-Path $StepsDir 'flameshot.ps1')
+. (Join-Path $StepsDir 'wsl.ps1')
+. (Join-Path $StepsDir 'wezterm.ps1')
+
+$T8 = New-StepCatalog
+$global:ScoopLog = @(); $global:ScoopBuckets = @()
+Invoke-ScoopStep -Catalog $T8
+Check 'step-scoop-installs-ticked' 'True' ([string]($global:ScoopLog -contains 'install main/7zip'))
+Check 'step-scoop-skips-unticked' 'False' ([string]($global:ScoopLog -contains 'install extras/vlc'))
+Check 'step-scoop-adds-bucket' 'True' ([string]($global:ScoopLog -contains 'bucket add main'))
+Check 'step-scoop-always-git-make' 'True' ([string](($global:ScoopLog -contains 'install main/git') -and ($global:ScoopLog -contains 'install main/make')))
+Check 'step-scoop-needs-no-extras-bucket' 'False' ([string]($global:ScoopLog -contains 'bucket add extras'))
+
+$T8b = New-StepCatalog
+$global:ScoopLog = @()
+Invoke-ScoopStep -Catalog $T8b -Verify
+Check 'step-scoop-verify-no-install' '0' ([string]$global:ScoopLog.Count)
+
+$SpaceHome = Join-Path $Work 'a b'
+New-Item -ItemType Directory -Path $SpaceHome -Force | Out-Null
+$WezSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'
+Invoke-WeztermStep -Items @('wezterm') -WeztermHome $SpaceHome -SrcPath $WezSrc
+Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
+
+$ThrewPre = $false
+try { Invoke-PreflightStep -Catalog @() -CatalogPath (Join-Path $Work 'no-catalog-here.txt') } catch { $ThrewPre = $true }
+Check 'step-preflight-missing-catalog' 'True' ([string]$ThrewPre)
+. (Join-Path $Root 'setup.ps1')
+
+$DryHome = Join-Path $Work 'dryrun-home'
+New-Item -ItemType Directory -Path $DryHome -Force | Out-Null
+$global:ScoopLog = @()
+Invoke-Setup -DryRun -Config (Join-Path $Work 'dryrun-config') -CatalogPath $Fixture -HomeDir $DryHome -StepsDir $StepsDir | Out-Null
+Check 'setup-dryrun-no-config' 'False' ([string](Test-Path (Join-Path $Work 'dryrun-config')))
+Check 'setup-dryrun-no-steps' '0' ([string]$global:ScoopLog.Count)
+
+$VerifyCfg = Join-Path $Work 'verify-save'
+$Cat9 = Import-Catalog -Path $Fixture
+$Extra9 = Import-Selection -Path $ConfigInput -Catalog $Cat9
+Save-Selection -Path $VerifyCfg -Catalog $Cat9 -Extra $Extra9
+$global:ScoopLog = @()
+Invoke-Setup -Verify -Config $VerifyCfg -CatalogPath $Fixture -HomeDir $DryHome -StepsDir $StepsDir | Out-Null
+Check 'setup-verify-no-save' 'same' (cmp-bytes $VerifyCfg $ConfigExpected)
+Check 'setup-verify-no-steps' '0' ([string]$global:ScoopLog.Count)
+
+$SelThrew = $false
+try { Invoke-Setup -Select -Config (Join-Path $Work 'select-config') -CatalogPath $Fixture -HomeDir $DryHome -StepsDir $StepsDir | Out-Null } catch { $SelThrew = $true }
+Check 'setup-select-no-console-errors' 'True' ([string]$SelThrew)
+
+$global:ScoopLog = @()
+$MissThrew = $false
+try { Invoke-Setup -Yes -Config (Join-Path $Work 'no-such-dir-x/config') -ConfigExplicit -CatalogPath $Fixture -HomeDir $DryHome -StepsDir $StepsDir | Out-Null } catch { $MissThrew = $true }
+Check 'setup-yes-missing-config-errors' 'True' ([string]$MissThrew)
+Check 'setup-yes-missing-no-steps' '0' ([string]$global:ScoopLog.Count)
+
+$FailCatalog = Join-Path $Work 'failcat.txt'
+[IO.File]::WriteAllText($FailCatalog, 'win-setup|vscode|VS Code + extensions|windows|on|step:vscode', (New-Object Text.UTF8Encoding($false)))
+$FailCfg2 = Join-Path $Work 'failrun-config'
+[IO.File]::WriteAllText($FailCfg2, '# empty', (New-Object Text.UTF8Encoding($false)))
+function Invoke-VscodeStep { param([string[]]$Items = @(), [switch]$Verify) throw "boom" }
+$FailOut = Invoke-Setup -Yes -Config $FailCfg2 -CatalogPath $FailCatalog -HomeDir $DryHome -StepsDir $StepsDir
+$FailCode = @($FailOut)[(@($FailOut)).Count - 1]
+Check 'setup-step-failure-exit' '1' ([string]$FailCode)
+. (Join-Path $Root (Join-Path 'windows' (Join-Path 'steps' 'vscode.ps1')))
+
+$ElevMsg = try { Invoke-Setup -Yes -Config $FailCfg2 -ConfigExplicit -CatalogPath $FailCatalog -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $true -ScoopPresent $false | Out-Null; '' } catch { $_.Exception.Message }
+Check 'setup-elevated-scoop-missing' 'True' ([string]($ElevMsg -match 'Administrator|Scoop'))
+
 # Menu (Task 7). Mirrors the Task 4 key tests from lib/menu.sh.
 function New-TestState { return @{ Cursor = 0; OpenGroup = ''; Top = 0; Rows = 20; Result = ''; GroupCursor = 0 } }
 Check 'menu-available-redirected' 'False' ([string](Test-MenuAvailable))
