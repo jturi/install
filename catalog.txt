@@ -25,6 +25,7 @@ system|lsof|lsof|linux,macos|on|pkg
 system|which|which|linux,macos|on|pkg
 system|file|file|linux,macos|on|pkg
 system|diffutils|diffutils|linux,macos|on|pkg
+system|make|make|linux,macos|on|pkg
 network|git|git|linux,macos|on|pkg
 network|openssh-client|openssh-client|linux,macos|on|pkg
 network|curl|curl|linux,macos|on|pkg

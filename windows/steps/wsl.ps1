@@ -14,12 +14,14 @@ function Invoke-WslStep {
   $Code = $LASTEXITCODE
   if (Test-WslUbuntuInstalled) {
     Write-StepOk 'WSL (Ubuntu)'
-    Write-StepWarn 'open Ubuntu from the Start menu once to create your Linux user'
+    Add-StepTodo 'open Ubuntu from the Start menu once to create your Linux user'
     return
   }
   if ($Code -ne 0) {
     throw "wsl --install -d Ubuntu failed (exit $Code): run as administrator and check that virtualization is enabled"
   }
   # Exit 0 without a listed distro: the install finishes after a restart.
-  Write-StepWarn 'WSL Ubuntu is not ready yet: restart Windows, then open Ubuntu once to finish its setup'
+  $Msg = 'WSL Ubuntu is not ready yet: restart Windows, then open Ubuntu once to finish its setup'
+  Write-StepWarn $Msg
+  Add-StepTodo $Msg
 }

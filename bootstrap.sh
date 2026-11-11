@@ -81,4 +81,18 @@
   else
     bash "$dir/setup.sh" "$@" </dev/tty
   fi
+
+  # A child process cannot source ~/.bashrc into the shell that ran it, so
+  # start a fresh interactive shell instead: it reads ~/.bashrc (or ~/.zshrc)
+  # and the new aliases work at once. Skipped for a dry run, --select, --help,
+  # with no terminal, or with BOOTSTRAP_NO_SHELL=1.
+  for a in "$@"; do
+    case "$a" in -n | --dry-run | --select | -h | --help) exit 0 ;; esac
+  done
+  [ "${BOOTSTRAP_NO_SHELL:-0}" != 1 ] || exit 0
+  has_tty || exit 0
+  shell="${SHELL:-/bin/bash}"
+  command -v "$shell" >/dev/null 2>&1 || shell=bash
+  echo "==> starting a new $(basename "$shell") so the new aliases load (exit returns to the old one)"
+  exec "$shell" -i </dev/tty >/dev/tty 2>&1
 )

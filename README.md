@@ -238,7 +238,7 @@ package manager:
 
 - Packages: `pkg` lines in `catalog.txt`, grouped:
   - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, man-db
-  - system: sudo, htop, procps, lsof, which, file, diffutils
+  - system: sudo, htop, procps, lsof, which, file, diffutils, make
   - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
   - files: tree, tar, gzip, zip, unzip, jq
 

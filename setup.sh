@@ -182,7 +182,8 @@ pkg_name() {
     macos:less | macos:man-db | macos:sudo | macos:procps | macos:lsof | macos:which | \
       macos:file | macos:diffutils | macos:openssh-client | macos:openssh-server | \
       macos:curl | macos:iproute2 | macos:iputils | macos:dnsutils | \
-      macos:ca-certificates | macos:zsh | macos:tar | macos:gzip | macos:zip | macos:unzip) ;;
+      macos:ca-certificates | macos:zsh | macos:tar | macos:gzip | macos:zip | macos:unzip | \
+      macos:make) ;;
     macos:bash-completion) echo bash-completion@2 ;;
     *) echo "${pkg}" ;;
   esac

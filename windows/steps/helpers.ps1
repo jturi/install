@@ -8,9 +8,44 @@ $script:WinStepRepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)) {
   $script:WinStepHelpersLoaded = $true
 
-  function Write-StepInfo($Msg) { Write-Output ("==> " + $Msg) }
-  function Write-StepOk($Msg) { Write-Output (" ok " + $Msg) }
-  function Write-StepWarn($Msg) { Write-Warning $Msg }
+  # Output vocabulary, shared by every step (ASCII only):
+  #   == Title ==     section header, one per step
+  #     - text        progress or a note
+  #     [OK] text     done, or already in place
+  #     [!!] text     warning, the run goes on (Write-StepWarn)
+  function Write-StepSection($Title) { Write-Output ("`n== " + $Title + " ==") }
+  function Write-StepInfo($Msg) { Write-Output ("  - " + $Msg) }
+  function Write-StepOk($Msg) { Write-Output ("  [OK] " + $Msg) }
+  function Write-StepWarn($Msg) { Write-Output ("  [!!] " + $Msg) }
+
+  # Things the user must still do by hand (a restart, a first-run setup). Steps
+  # add them; setup prints them under TODO at the end of the run, in yellow.
+  function Add-StepTodo($Msg) {
+    if ($null -eq $global:StepTodos) { $global:StepTodos = @() }
+    $global:StepTodos += [string]$Msg
+  }
+  function Write-StepTodos {
+    if ($null -eq $global:StepTodos -or @($global:StepTodos).Count -eq 0) { return }
+    Write-Output "`n== TODO =="
+    foreach ($Todo in @($global:StepTodos)) { Write-Host ('  [!!] ' + $Todo) -ForegroundColor Yellow }
+  }
+
+  # Run a scoop command with its output captured: the progress noise stays out
+  # of the run. Returns the exit code and the captured lines.
+  function Invoke-StepScoop {
+    param([string[]]$ScoopArgs = @())
+    $global:LASTEXITCODE = 0
+    $Out = @(& scoop @ScoopArgs *>&1 | ForEach-Object { [string]$_ })
+    return @{ Code = $LASTEXITCODE; Lines = $Out }
+  }
+
+  # The last few captured lines, for an error message.
+  function Get-StepTail($Lines, [int]$Count = 4) {
+    $Clean = @($Lines | Where-Object { $_ -and $_.Trim() -ne '' })
+    if ($Clean.Count -eq 0) { return '' }
+    $Start = [Math]::Max(0, $Clean.Count - $Count)
+    return (($Clean[$Start..($Clean.Count - 1)]) -join ' | ')
+  }
 
   function Test-StepFilesEqual($A, $B) {
     if (-not (Test-Path $A)) { return $false }
@@ -60,17 +95,19 @@ if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)
   # Add a bucket once. Needs git, so the scoop step installs main/git first.
   function Add-StepScoopBucket($Bucket) {
     if (Test-StepScoopBucket $Bucket) { return }
-    $global:LASTEXITCODE = 0
-    scoop bucket add $Bucket
-    if ($LASTEXITCODE) { throw "scoop bucket add $Bucket failed (exit $LASTEXITCODE)" }
+    $Res = Invoke-StepScoop @('bucket', 'add', $Bucket)
+    if ($Res.Code) { throw "scoop bucket add $Bucket failed (exit $($Res.Code)): $(Get-StepTail $Res.Lines)" }
+    Write-StepInfo ("added bucket " + $Bucket)
   }
 
-  # Install <bucket>/<app>, adding the bucket first. Throws on a scoop error.
+  # Install <bucket>/<app>, adding the bucket first. Quiet: one line per app.
+  # Throws on a scoop error, with the last output lines.
   function Install-StepScoopApp($Bucket, $App) {
     Add-StepScoopBucket $Bucket
-    $global:LASTEXITCODE = 0
-    scoop install ($Bucket + '/' + $App)
-    if ($LASTEXITCODE) { throw "scoop install $Bucket/$App failed (exit $LASTEXITCODE)" }
+    $Res = Invoke-StepScoop @('install', ($Bucket + '/' + $App))
+    if ($Res.Code) { throw "scoop install $Bucket/$App failed (exit $($Res.Code)): $(Get-StepTail $Res.Lines)" }
+    if (($Res.Lines -join ' ') -match 'already installed') { Write-StepOk ($App + ' (already installed)') }
+    else { Write-StepOk $App }
   }
 
   function Test-StepAdmin {

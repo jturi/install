@@ -85,6 +85,48 @@ function Import-Catalog {
   }
   return $Rows
 }
+# Read one key=value setting from the config file. '' when absent.
+function Get-ConfigValue {
+  param([string]$Path = '', [string]$Key = '')
+  if (-not $Path -or -not (Test-Path $Path)) { return '' }
+  $Found = ''
+  foreach ($Raw in ([IO.File]::ReadAllText($Path) -split "`n")) {
+    $Line = $Raw.TrimEnd("`r").TrimStart([char]0xFEFF)
+    if ($Line.StartsWith($Key + '=')) { $Found = $Line.Substring($Key.Length + 1) }
+  }
+  return $Found
+}
+
+# Set one key=value setting, keeping every other line. Writes atomically.
+function Set-ConfigValue {
+  param([string]$Path = '', [string]$Key = '', [string]$Value = '')
+  if ($Value -match "[\r\n]") { throw "config value for $Key must be one line" }
+  $Lines = @()
+  if (Test-Path $Path) {
+    $Lines = @(([IO.File]::ReadAllText($Path) -split "`n") | ForEach-Object { $_.TrimEnd("`r").TrimStart([char]0xFEFF) } | Where-Object { $_ -ne '' })
+  }
+  $Out = @()
+  $Done = $false
+  foreach ($Line in $Lines) {
+    if ($Line.StartsWith($Key + '=')) {
+      if (-not $Done) { $Out += ($Key + '=' + $Value); $Done = $true }
+      continue
+    }
+    $Out += $Line
+  }
+  if (-not $Done) { $Out += ($Key + '=' + $Value) }
+  $Dir = Split-Path $Path -Parent
+  if ($Dir -and $Dir -ne '') { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
+  $Tmp = "$Path.tmp.$PID"
+  try {
+    [IO.File]::WriteAllText($Tmp, (($Out -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+    Move-Item -Force $Tmp $Path
+  } catch {
+    if (Test-Path $Tmp) { Remove-Item -Force $Tmp }
+    throw
+  }
+}
+
 function Import-Selection {
   param([string]$Path = '', [object[]]$Catalog = @())
   $Seen = @{}
@@ -114,6 +156,8 @@ function Import-Selection {
       $Key = $Line.Substring(0, $Eq)
       $Value = $Line.Substring($Eq + 1)
     }
+    # Free-text settings (GitHub user, git email) are kept as they are, not as 0/1 flags.
+    if ($Eq -ge 0 -and (@('github.user', 'git.email') -ccontains $Key)) { $Extra += $Line; continue }
     if ($Eq -lt 0 -or $Key -eq '' -or ($Value -ne '0' -and $Value -ne '1')) {
       Write-Warning "$Path line ${n}: ignoring '$Line'"
       continue
