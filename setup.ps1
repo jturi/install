@@ -19,6 +19,27 @@ param(
 $ErrorActionPreference = 'Stop'
 $Here = Split-Path $MyInvocation.MyCommand.Path -Parent
 . (Join-Path $Here (Join-Path 'windows' (Join-Path 'steps' 'helpers.ps1')))
+. (Join-Path $Here (Join-Path 'windows' 'lib.ps1'))
+. (Join-Path $Here (Join-Path 'windows' 'menu.ps1'))
+foreach ($StepFile in (Get-ChildItem -Path (Join-Path $Here (Join-Path 'windows' 'steps')) -Filter '*.ps1')) {
+  . $StepFile.FullName
+}
+
+# Scoop's installer and the copied profile need local scripts to run. Set
+# RemoteSigned for the current user when the policy outside this process
+# blocks them. Windows only; a group policy setting wins and only warns.
+function Set-SetupExecutionPolicy {
+  param([switch]$Verify)
+  if ($env:OS -ne 'Windows_NT') { return }
+  $Policy = [string](Get-ExecutionPolicy -Scope CurrentUser)
+  if ($Policy -eq 'Undefined') { $Policy = [string](Get-ExecutionPolicy -Scope LocalMachine) }
+  if ($Policy -ne 'Undefined' -and $Policy -ne 'Restricted' -and $Policy -ne 'AllSigned') { return }
+  if ($Verify) { Write-StepInfo ("would set execution policy RemoteSigned for CurrentUser (now " + $Policy + ")"); return }
+  try {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Write-StepOk 'execution policy: RemoteSigned (CurrentUser)'
+  } catch { Write-StepWarn ('could not set execution policy: ' + $_.Exception.Message) }
+}
 
 function Get-SetupConfigPath {
   param([string]$Explicit = '', [string]$Home_ = '')
@@ -76,6 +97,7 @@ function Invoke-Setup {
   if ($IsElevated -and -not $HasScoop) {
     throw 'Running as Administrator with no Scoop installed: install Scoop as a normal user first (https://scoop.sh).'
   }
+  if ($Verify -or $DryRun) { Set-SetupExecutionPolicy -Verify } else { Set-SetupExecutionPolicy }
   if (-not $HasScoop -and -not $Verify -and -not $DryRun) {
     Write-Output 'Scoop not found: installing from https://get.scoop.sh ...'
     try { Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://get.scoop.sh')) } catch { throw }
@@ -84,6 +106,10 @@ function Invoke-Setup {
   if ($DryRun -or $Verify) {
     Invoke-PreflightStep -Catalog $Catalog -CatalogPath $CatalogPath
     Invoke-ScoopStep -Catalog $Catalog -Verify
+    $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'profile'
+    if ($Items.Count -gt 0) { Invoke-ProfileStep -Items $Items -Verify }
+    $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'hotkeys'
+    if ($Items.Count -gt 0) { Invoke-HotkeysStep -Items $Items -Verify -HotkeysHome $HomeDir }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'vscode'
     if ($Items.Count -gt 0) { Invoke-VscodeStep -Items $Items -Verify }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'flameshot'
@@ -103,6 +129,14 @@ function Invoke-Setup {
   Invoke-PreflightStep -Catalog $Catalog -CatalogPath $CatalogPath
   $Failures = @()
   try { Invoke-ScoopStep -Catalog $Catalog } catch { $Failures += ('scoop: ' + $_.Exception.Message) }
+  $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'profile'
+  if ($Items.Count -gt 0) {
+    try { Invoke-ProfileStep -Items $Items } catch { $Failures += ('profile: ' + $_.Exception.Message) }
+  }
+  $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'hotkeys'
+  if ($Items.Count -gt 0) {
+    try { Invoke-HotkeysStep -Items $Items -HotkeysHome $HomeDir } catch { $Failures += ('hotkeys: ' + $_.Exception.Message) }
+  }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'vscode'
   if ($Items.Count -gt 0) {
     try { Invoke-VscodeStep -Items $Items } catch { $Failures += ('vscode: ' + $_.Exception.Message) }
@@ -137,5 +171,10 @@ if ($MyInvocation.InvocationName -ne '.') {
   $RealScoop = $ScoopPresent
   $WasConfigExplicit = $false
   if ($PSBoundParameters.ContainsKey('Config')) { $WasConfigExplicit = $true }
-  exit (Invoke-Setup -Yes:$Yes -DryRun:$DryRun -Select:$Select -Config $Config -Verify:$Verify -StepsDir $RealStepsDir -CatalogPath $RealCatalog -HomeDir $RealHome -IsAdmin $RealAdmin -ScoopPresent $RealScoop -ConfigExplicit:$WasConfigExplicit)
+  # Stream messages as they come; the int Invoke-Setup returns is the exit code.
+  $script:SetupExitCode = 0
+  Invoke-Setup -Yes:$Yes -DryRun:$DryRun -Select:$Select -Config $Config -Verify:$Verify -StepsDir $RealStepsDir -CatalogPath $RealCatalog -HomeDir $RealHome -IsAdmin $RealAdmin -ScoopPresent $RealScoop -ConfigExplicit:$WasConfigExplicit | ForEach-Object {
+    if ($_ -is [int]) { $script:SetupExitCode = $_ } else { $_ }
+  }
+  exit $script:SetupExitCode
 }

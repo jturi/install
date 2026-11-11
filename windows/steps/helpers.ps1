@@ -1,6 +1,10 @@
 # Shared helpers for Windows steps. ASCII only, PowerShell 5.1 syntax only.
 # Dot-sourced by each step file; safe to dot-source more than once.
 
+# Repo root for config sources. Inside a function $MyInvocation.MyCommand.Path
+# is empty, so steps read this instead.
+$script:WinStepRepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+
 if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)) {
   $script:WinStepHelpersLoaded = $true
 

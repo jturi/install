@@ -6,8 +6,7 @@ function Invoke-VscodeStep {
   param([string[]]$Items = @(), [switch]$Verify)
   if ($Verify) { Write-StepInfo 'would install VS Code and extensions'; return }
   scoop install extras/vscode
-  $Here = Split-Path $MyInvocation.MyCommand.Path -Parent
-  $List = Join-Path (Split-Path (Split-Path $Here -Parent) -Parent) (Join-Path 'configs' (Join-Path 'windows' 'vscode_extensions.txt'))
+  $List = Join-Path $script:WinStepRepoRoot (Join-Path 'configs' (Join-Path 'windows' 'vscode_extensions.txt'))
   if (Test-Path $List) {
     $Text = [IO.File]::ReadAllText($List)
     $ListLines = $Text -split "`n"

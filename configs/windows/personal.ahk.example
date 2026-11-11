@@ -1,0 +1,40 @@
+; ============================================================
+; personal.ahk.example - Skeleton for personal data & hotkeys (AutoHotkey v2)
+;
+; This is a template with dummy values. setup.ps1 copies it to personal.ahk
+; next to hotkeys.ahk once, and never overwrites it after that. Fill in your
+; own values there. hotkeys.ahk loads it with:  #Include *i personal.ahk
+; ============================================================
+#Requires AutoHotkey v2.0
+
+; ---------- Global variables (single source of truth) ----------
+global g_email      := "your.name@example.com"
+global g_email_work := "your.name@example.org"
+global g_phone      := "+1 555 0100"
+global g_address    := "123 Example Street"
+global g_name       := "Your Name"
+global g_projects   := "C:\Projects"
+
+; ---------- Hotkeys ----------
+^+!o::Send(g_email)
+^+!j::Send(g_email_work)
+#e::Run(g_projects)
+
+; Example app hotkey: Win+1 focuses Teams chat input, or starts Teams.
+; #1:: {
+;     if WinExist("ahk_exe ms-teams.exe") {
+;         WinActivate("ahk_exe ms-teams.exe")
+;         Sleep(200)
+;         Send("^+m")
+;     } else {
+;         Run("ms-teams:")
+;     }
+; }
+
+; ---------- Auto-expand text (X = execute as code) ----------
+:X:;;email::Send(g_email_work)
+:X:;;phone::Send(g_phone)
+:X:;;address::Send(g_address)
+
+; ---------- Persistent tray icon ----------
+; (no #Persistent needed in v2 - scripts run until exited)

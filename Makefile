@@ -12,7 +12,7 @@
 .PHONY: sync-dotfiles
 
 SHELL_FILES := setup.sh lib/*.sh tests/*.sh
-PS1_FILES := setup.ps1 windows/lib.ps1 windows/menu.ps1 windows/steps/*.ps1 tests/test_windows.ps1 tests/check_ps1.ps1
+PS1_FILES := setup.ps1 windows/lib.ps1 windows/menu.ps1 windows/steps/*.ps1 tests/test_windows.ps1 tests/check_ps1.ps1 configs/windows/profile.ps1
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
 

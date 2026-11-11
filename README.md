@@ -24,11 +24,30 @@ The curl line also works on macOS (curl and tar are built in).
 ## Windows quick start
 
 Native Windows uses `setup.ps1` (PowerShell 5.1+). One line, no git needed
-(downloads the repo zip to `~/install` and runs it):
+(downloads the repo zip, unpacks it to `%USERPROFILE%\install` and runs it).
+The GitHub zip holds an `install-main` folder, so the line copies its
+contents up one level. `-ExecutionPolicy Bypass` is needed because a fresh
+Windows blocks local scripts:
 
 ```powershell
-mkdir ~/install -Force; Invoke-WebRequest -Uri https://github.com/jturi/install/archive/refs/heads/main.zip -OutFile "$env:TEMP/install.zip"; Expand-Archive -Force "$env:TEMP/install.zip" ~/install; ~/install/setup.ps1
+$z = "$env:TEMP\install.zip"; Invoke-WebRequest -UseBasicParsing -Uri https://github.com/jturi/install/archive/refs/heads/main.zip -OutFile $z; Expand-Archive -Force $z "$env:TEMP\install-src"; New-Item -ItemType Directory -Force "$HOME\install" | Out-Null; Copy-Item -Recurse -Force "$env:TEMP\install-src\install-main\*" "$HOME\install"; powershell -ExecutionPolicy Bypass -File "$HOME\install\setup.ps1"
 ```
+
+What the Windows run does besides Scoop apps:
+
+- Sets the execution policy to `RemoteSigned` for the current user when it
+  is `Restricted`, `AllSigned` or unset. Scoop and the profile need it.
+- **PowerShell profile** (on by default): copies
+  `configs/windows/profile.ps1` to
+  `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
+  `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real Documents
+  folder, also when OneDrive moved it). A different old file is kept as
+  `.bak.<timestamp>`.
+- **AutoHotkey hotkeys** (off by default): installs AutoHotkey v2
+  (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk` to
+  `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
+  `configs/windows/personal.ahk.example` once (never overwritten), adds a
+  `hotkeys.lnk` Startup shortcut and starts the script.
 
 Or clone it and run with bypassed execution policy:
 

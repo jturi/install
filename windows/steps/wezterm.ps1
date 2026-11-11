@@ -7,8 +7,7 @@ function Invoke-WeztermStep {
   $HomeDir = Get-StepConfigHome -HomeDir $WeztermHome
   $Src = $SrcPath
   if (-not $Src -or $Src -eq '') {
-    $Here = Split-Path $MyInvocation.MyCommand.Path -Parent
-    $Src = Join-Path (Split-Path (Split-Path $Here -Parent) -Parent) (Join-Path 'configs' (Join-Path 'wezterm' 'windows.lua'))
+    $Src = Join-Path $script:WinStepRepoRoot (Join-Path 'configs' (Join-Path 'wezterm' 'windows.lua'))
   }
   $Dst = Join-Path $HomeDir '.wezterm.lua'
   if ($Verify) { Write-StepInfo ("would install WezTerm and copy $Dst"); return }

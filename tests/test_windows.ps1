@@ -196,6 +196,42 @@ $WezSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.l
 Invoke-WeztermStep -Items @('wezterm') -WeztermHome $SpaceHome -SrcPath $WezSrc
 Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
 
+. (Join-Path $StepsDir 'profile.ps1')
+. (Join-Path $StepsDir 'hotkeys.ps1')
+$ProfSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'windows') 'profile.ps1'
+$DocsDir = Join-Path $Work 'Docs a b'
+$Ps5Profile = Join-Path (Join-Path $DocsDir 'WindowsPowerShell') 'Microsoft.PowerShell_profile.ps1'
+$Ps7Profile = Join-Path (Join-Path $DocsDir 'PowerShell') 'Microsoft.PowerShell_profile.ps1'
+New-Item -ItemType Directory -Path (Split-Path $Ps5Profile -Parent) -Force | Out-Null
+[IO.File]::WriteAllText($Ps5Profile, '# old profile', (New-Object Text.UTF8Encoding($false)))
+Invoke-ProfileStep -Items @('profile') -DocumentsDir $DocsDir | Out-Null
+Check 'step-profile-copies-ps5' 'same' (cmp-bytes $Ps5Profile $ProfSrc)
+Check 'step-profile-copies-ps7' 'same' (cmp-bytes $Ps7Profile $ProfSrc)
+Check 'step-profile-backs-up-old' '1' ([string]@(Get-ChildItem -Path (Split-Path $Ps5Profile -Parent) -Filter '*.bak.*').Count)
+$VerifyDocs = Join-Path $Work 'verify-docs'
+Invoke-ProfileStep -Items @('profile') -DocumentsDir $VerifyDocs -Verify | Out-Null
+Check 'step-profile-verify-no-copy' 'False' ([string](Test-Path $VerifyDocs))
+
+$AhkHome = Join-Path $Work 'ahk home'
+$AhkSrcDir = Join-Path (Join-Path $Root 'configs') 'windows'
+$global:ScoopLog = @()
+Invoke-HotkeysStep -Items @('hotkeys') -HotkeysHome $AhkHome -NoLaunch | Out-Null
+$AhkDir = Join-Path $AhkHome 'hotkeys'
+Check 'step-hotkeys-installs-ahk' 'True' ([string]($global:ScoopLog -contains 'install extras/autohotkey'))
+Check 'step-hotkeys-copies-script' 'same' (cmp-bytes (Join-Path $AhkDir 'hotkeys.ahk') (Join-Path $AhkSrcDir 'hotkeys.ahk'))
+Check 'step-hotkeys-creates-personal' 'same' (cmp-bytes (Join-Path $AhkDir 'personal.ahk') (Join-Path $AhkSrcDir 'personal.ahk.example'))
+[IO.File]::WriteAllText((Join-Path $AhkDir 'personal.ahk'), '; mine', (New-Object Text.UTF8Encoding($false)))
+Invoke-HotkeysStep -Items @('hotkeys') -HotkeysHome $AhkHome -NoLaunch | Out-Null
+Check 'step-hotkeys-keeps-personal' '; mine' ([IO.File]::ReadAllText((Join-Path $AhkDir 'personal.ahk')))
+
+# setup.ps1 run as its own process must load lib, menu and steps itself.
+$Shell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+$SoloHome = Join-Path $Work 'solo home'
+New-Item -ItemType Directory -Path $SoloHome -Force | Out-Null
+$SoloOut = & $Shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root 'setup.ps1') -DryRun -Config (Join-Path $Work 'solo-config') -CatalogPath $Fixture -HomeDir $SoloHome 2>&1 | Out-String
+Check 'setup-standalone-exit' '0' ([string]$LASTEXITCODE)
+Check 'setup-standalone-dryrun' 'True' ([string]($SoloOut -match 'Dry run: nothing changed'))
+
 $ThrewPre = $false
 try { Invoke-PreflightStep -Catalog @() -CatalogPath (Join-Path $Work 'no-catalog-here.txt') } catch { $ThrewPre = $true }
 Check 'step-preflight-missing-catalog' 'True' ([string]$ThrewPre)
