@@ -244,6 +244,26 @@ $WezSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.l
 $global:ScoopLog = @()
 Invoke-WeztermStep -Items @('wezterm') -WeztermHome $SpaceHome -SrcPath $WezSrc
 Check 'step-wezterm-adds-extras' 'True' ([string]($global:ScoopLog -contains 'bucket add extras'))
+# VS Code: only missing extensions install; a failed one fails the step.
+$global:CodeLog = @(); $global:CodeFail = @()
+function global:code {
+  $global:LASTEXITCODE = 0
+  if ($args[0] -eq '--list-extensions') { Write-Output 'MS-VSCODE.PowerShell'; return }
+  $global:CodeLog += ($args -join ' ')
+  if ($global:CodeFail -contains $args[1]) { $global:LASTEXITCODE = 1 }
+}
+$ExtList = Join-Path $Work 'ext.txt'
+[IO.File]::WriteAllText($ExtList, "# c`r`nms-vscode.powershell`r`n`r`n  a.b  `r`na.b`r`nc.d`r`n", (New-Object Text.UTF8Encoding($false)))
+Check 'step-vscode-list-parse' 'ms-vscode.powershell a.b c.d' ((Get-VscodeStepExtensions -ListPath $ExtList) -join ' ')
+Invoke-VscodeStep -Items @('vscode') -ListPath $ExtList | Out-Null
+Check 'step-vscode-skips-installed' '--install-extension a.b|--install-extension c.d' ($global:CodeLog -join '|')
+$global:CodeLog = @(); $global:CodeFail = @('a.b')
+$CodeErr = try { Invoke-VscodeStep -Items @('vscode') -ListPath $ExtList 3>$null | Out-Null; '' } catch { $_.Exception.Message }
+$global:CodeFail = @()
+Check 'step-vscode-failure-throws' 'VS Code extensions failed: a.b' $CodeErr
+Check 'step-vscode-failure-continues' 'True' ([string]($global:CodeLog -contains '--install-extension c.d'))
+Remove-Item Function:\code
+
 Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
 
 . (Join-Path $StepsDir 'profile.ps1')
@@ -389,6 +409,9 @@ function global:Invoke-StepElevated {
   $global:Sshd = New-Object PSObject -Property @{ Status = 'Running'; StartType = 'Automatic' }
   return 0
 }
+# Invoke-CheckStep also checks git and make: stub them so only sshd counts.
+function global:git { }
+function global:make { }
 $SrvRow = New-Object PSObject -Property @{ Action = 'step:ssh-server' }
 Check 'sshd-check-missing' 'False' ([string](Test-CheckItem -Row $SrvRow))
 $SrvPlan = Invoke-SshServerStep -Items @('ssh-server') -Verify | Out-String
@@ -429,6 +452,7 @@ Check 'sshd-restart-no-throw' '' $RestartErr
 Check 'sshd-restart-warns' 'True' ([string]($RestartOut -match 'needs a restart'))
 $RestartCheck = Invoke-CheckStep -Catalog @((New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-server'; Label = 'OpenSSH server (sshd)'; Action = 'step:ssh-server'; Selected = $true })) -Missing ([ref]$SkipMissing) | Out-String
 Check 'sshd-restart-check-skipped' 'True|0' (([string]($RestartCheck -match '\(restart needed\)')) + '|' + $SkipMissing)
+Remove-Item Function:\git, Function:\make
 # The script exits 2 when the sshd service is missing after the install, and
 # opens the firewall before that, so the rule is in place after the restart.
 $SrvScript = Get-StepSshServerScript -LogPath 'x.log' -StatusPath 'x.status'
@@ -454,9 +478,12 @@ Check 'sshd-status-garbage' 'True' ([string]($null -eq (Read-StepStatus -Path $S
 Check 'sshd-progress-stage' '85' ([string](Get-StepProgressPercent -Stage 85 -StageSeconds 30))
 Check 'sshd-progress-creeps' 'True' ([string](((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -gt 15) -and ((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -lt (Get-StepProgressPercent -Stage 15 -StageSeconds 180))))
 Check 'sshd-progress-capped' '74' ([string](Get-StepProgressPercent -Stage 15 -StageSeconds 100000))
-# A real child process (not elevated): its stages show up and the exit code comes back.
-$ElevCode = Invoke-StepElevated -Script ("[IO.File]::WriteAllText('" + $StatusFile + "', '50|half'); Start-Sleep -Milliseconds 700; exit 3") -IsAdmin $true -StatusPath $StatusFile -Activity 'test'
-Check 'sshd-elevated-exit-code' '3' ([string]$ElevCode)
+# A real child process (not elevated): its stages show up and the exit code
+# comes back. Windows only: it starts powershell.exe -WindowStyle Hidden.
+if ($env:OS -eq 'Windows_NT') {
+  $ElevCode = Invoke-StepElevated -Script ("[IO.File]::WriteAllText('" + $StatusFile + "', '50|half'); Start-Sleep -Milliseconds 700; exit 3") -IsAdmin $true -StatusPath $StatusFile -Activity 'test'
+  Check 'sshd-elevated-exit-code' '3' ([string]$ElevCode)
+} else { Write-Output 'SKIP sshd-elevated-exit-code: needs Windows' }
 
 # WSL: an installed Ubuntu is not installed again (that fails with
 # Wsl/InstallDistro/ERROR_ALREADY_EXISTS).

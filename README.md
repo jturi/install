@@ -143,9 +143,13 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      to `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
      `configs/windows/personal.ahk.example` once (never overwritten), adds a
      `hotkeys.lnk` Startup shortcut and starts the script.
-   - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`,
-     **Flameshot**, **WSL (Ubuntu)**, and **WezTerm** with
+   - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`
+     (only the ones not installed yet), **Flameshot**, and **WezTerm** with
      `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
+   - **WSL (Ubuntu)**: runs `wsl --install -d Ubuntu --no-launch` only when
+     the `Ubuntu` distro is not installed. The first install needs
+     Administrator and often a restart; then open Ubuntu once to create your
+     Linux user.
    - **OpenSSH server (sshd)** (off by default): adds the Windows optional
      feature `OpenSSH.Server`, sets the `sshd` service to start automatically,
      starts it and allows TCP 22 inbound from the local network only (firewall
@@ -167,8 +171,8 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      `.pub` from it. With no console (unattended run) it skips the key.
 5. Checks every ticked item and prints `OK <item>` or `MISSING <item>`
    (Scoop apps: `scoop\apps\<app>\<version>\scoop-install.json` or the older
-   `install.json` exists; `git`,
-   `make`, `code`, `wsl`: on `PATH`; configs: the copied files exist). An SSH
+   `install.json` exists; `git`, `make`, `code`: on `PATH`; WSL: the `Ubuntu`
+   distro is installed; configs: the copied files exist). An SSH
    key skipped for lack of a console prints `SKIPPED` and is not an error.
 6. Prints the SSH public key in green as the last line, ready to paste into
    GitHub or a server.
