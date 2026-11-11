@@ -146,6 +146,13 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
    - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`,
      **Flameshot**, **WSL (Ubuntu)**, and **WezTerm** with
      `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
+   - **OpenSSH server (sshd)** (off by default): adds the Windows optional
+     feature `OpenSSH.Server`, sets the `sshd` service to start automatically,
+     starts it and allows TCP 22 inbound from the local network only (firewall
+     rule `OpenSSH-Server-In-TCP` with `RemoteAddress LocalSubnet`; the
+     feature's own allow-any rule is narrowed to that). It needs
+     administrator rights, so Windows shows one UAC prompt. Nothing happens
+     when `sshd` is already running.
 
    - **SSH key** (on by default): keeps an existing `~\.ssh\*.pub` pair, else
      runs `ssh-keygen -t ed25519 -f ~\.ssh\id_ed25519` with the OpenSSH

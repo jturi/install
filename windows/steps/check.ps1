@@ -34,6 +34,7 @@ function Test-CheckItem {
     'step:flameshot' { return (Test-CheckScoopApp 'flameshot') }
     'step:wezterm' { return ((Test-CheckScoopApp 'wezterm') -and (Test-Path (Join-Path $H '.wezterm.lua'))) }
     'step:wsl' { return (Test-CheckCommand 'wsl') }
+    'step:ssh-server' { return (Test-StepSshdRunning) }
     'step:ssh-key' { return ((Find-StepSshKey -HomeDir $HomeDir) -ne '') }
   }
   return $true
