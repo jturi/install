@@ -11,6 +11,6 @@ function Invoke-WeztermStep {
   }
   $Dst = Join-Path $HomeDir '.wezterm.lua'
   if ($Verify) { Write-StepInfo ("would install WezTerm and copy $Dst"); return }
-  scoop install extras/wezterm
+  Install-StepScoopApp 'extras' 'wezterm'
   Install-StepFile $Src $Dst
 }

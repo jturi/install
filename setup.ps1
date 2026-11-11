@@ -118,6 +118,8 @@ function Invoke-Setup {
     if ($Items.Count -gt 0) { Invoke-WslStep -Items $Items -Verify }
     $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'wezterm'
     if ($Items.Count -gt 0) { Invoke-WeztermStep -Items $Items -Verify -WeztermHome $HomeDir }
+    $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
+    if ($Items.Count -gt 0) { Invoke-SshKeyStep -Items $Items -Verify -HomeDir $HomeDir }
     if ($DryRun) { Write-Output 'Dry run: nothing changed.' }
     return 0
   }
@@ -153,9 +155,20 @@ function Invoke-Setup {
   if ($Items.Count -gt 0) {
     try { Invoke-WeztermStep -Items $Items -WeztermHome $HomeDir } catch { $Failures += ('wezterm: ' + $_.Exception.Message) }
   }
+  $SshItems = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
+  if ($SshItems.Count -gt 0) {
+    try { Invoke-SshKeyStep -Items $SshItems -HomeDir $HomeDir } catch { $Failures += ('ssh-key: ' + $_.Exception.Message) }
+  }
+  $Missing = 0
+  try { Invoke-CheckStep -Catalog $Catalog -HomeDir $HomeDir -Missing ([ref]$Missing) } catch { $Failures += ('check: ' + $_.Exception.Message) }
+  if ($Missing -gt 0) { $Failures += ('check: ' + $Missing + ' item(s) missing') }
   foreach ($F in $Failures) { Write-Warning $F }
+  if ($Failures.Count -eq 0) { Write-Output 'Done.' }
+  # Last, so the key is the final thing on screen.
+  if ($SshItems.Count -gt 0) {
+    try { Show-StepSshKey -HomeDir $HomeDir } catch { Write-Warning ('ssh-key: ' + $_.Exception.Message) }
+  }
   if ($Failures.Count -gt 0) { return 1 }
-  Write-Output 'Done.'
   return 0
 }
 

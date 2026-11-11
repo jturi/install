@@ -26,7 +26,7 @@ function Invoke-HotkeysStep {
   $Personal = Join-Path $Dir 'personal.ahk'
   $SrcDir = Join-Path $script:WinStepRepoRoot (Join-Path 'configs' 'windows')
   if ($Verify) { Write-StepInfo ("would install AutoHotkey and copy " + $AhkFile); return }
-  scoop install extras/autohotkey
+  Install-StepScoopApp 'extras' 'autohotkey'
   Install-StepFile (Join-Path $SrcDir 'hotkeys.ahk') $AhkFile
   if (Test-Path $Personal) {
     Write-StepOk "$Personal (kept)"

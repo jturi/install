@@ -51,6 +51,28 @@ if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)
     return '~'
   }
 
+  # True when the bucket folder exists under the Scoop root.
+  function Test-StepScoopBucket($Bucket) {
+    if (-not (Get-Command Get-ScoopRoot -ErrorAction SilentlyContinue)) { return $false }
+    return (Test-Path (Join-Path (Get-ScoopRoot) (Join-Path 'buckets' $Bucket)))
+  }
+
+  # Add a bucket once. Needs git, so the scoop step installs main/git first.
+  function Add-StepScoopBucket($Bucket) {
+    if (Test-StepScoopBucket $Bucket) { return }
+    $global:LASTEXITCODE = 0
+    scoop bucket add $Bucket
+    if ($LASTEXITCODE) { throw "scoop bucket add $Bucket failed (exit $LASTEXITCODE)" }
+  }
+
+  # Install <bucket>/<app>, adding the bucket first. Throws on a scoop error.
+  function Install-StepScoopApp($Bucket, $App) {
+    Add-StepScoopBucket $Bucket
+    $global:LASTEXITCODE = 0
+    scoop install ($Bucket + '/' + $App)
+    if ($LASTEXITCODE) { throw "scoop install $Bucket/$App failed (exit $LASTEXITCODE)" }
+  }
+
   function Test-StepAdmin {
     param([object]$IsAdmin = $null)
     if ($IsAdmin -ne $null) { return ([bool]$IsAdmin) }

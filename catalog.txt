@@ -78,3 +78,4 @@ win-setup|vscode|VS Code + extensions|windows|off|step:vscode
 win-setup|flameshot|Flameshot + hotkey|windows|off|step:flameshot
 win-setup|hotkeys|AutoHotkey hotkeys|windows|off|step:hotkeys
 win-setup|wsl|WSL (Ubuntu)|windows|off|step:wsl
+win-setup|ssh-key|SSH key (ed25519)|windows|on|step:ssh-key

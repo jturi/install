@@ -4,6 +4,6 @@
 function Invoke-FlameshotStep {
   param([string[]]$Items = @(), [switch]$Verify)
   if ($Verify) { Write-StepInfo 'would install Flameshot'; return }
-  scoop install extras/flameshot
+  Install-StepScoopApp 'extras' 'flameshot'
   Write-StepOk 'Flameshot'
 }

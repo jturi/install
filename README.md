@@ -126,8 +126,12 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
 1. Sets the CurrentUser execution policy to `RemoteSigned` if it is
    `Undefined`, `Restricted` or `AllSigned`. Scoop and the profile need it.
 2. Installs [Scoop](https://scoop.sh) if it is missing.
-3. Installs the ticked `scoop:` items from `catalog.txt`, plus `git` and
-   `make`, adding Scoop buckets as needed.
+3. Installs `git` first (`scoop bucket add` needs it), adds the buckets the
+   ticked items use (`extras` for most apps), runs `scoop update` so Scoop
+   and every bucket are current, then installs the ticked `scoop:` items from
+   `catalog.txt` plus `make`. A failed app or bucket doesn't stop the others;
+   the step then fails and names the apps. Steps that install from `extras` (WezTerm,
+   VS Code, Flameshot, AutoHotkey) add that bucket themselves if needed.
 4. Runs the ticked steps:
    - **PowerShell profile** (on by default): copies
      `configs/windows/profile.ps1` to
@@ -143,8 +147,21 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      **Flameshot**, **WSL (Ubuntu)**, and **WezTerm** with
      `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
 
+   - **SSH key** (on by default): keeps an existing `~\.ssh\*.pub` pair, else
+     runs `ssh-keygen -t ed25519 -f ~\.ssh\id_ed25519` with the OpenSSH
+     client built into Windows; ssh-keygen asks for the passphrase. It never
+     overwrites a private key: if only `id_ed25519` is there, it rebuilds the
+     `.pub` from it. With no console (unattended run) it skips the key.
+5. Checks every ticked item and prints `OK <item>` or `MISSING <item>`
+   (Scoop apps: `scoop\apps\<app>\<version>\install.json` exists; `git`,
+   `make`, `code`, `wsl`: on `PATH`; configs: the copied files exist). An SSH
+   key skipped for lack of a console prints `SKIPPED` and is not an error.
+6. Prints the SSH public key in green as the last line, ready to paste into
+   GitHub or a server.
+
 A changed config file is backed up first as `<file>.bak.<timestamp>`. A failed
-step doesn't stop the next one; the exit code is 1 if any step failed.
+step doesn't stop the next one; the exit code is 1 if any step failed or the
+check found a missing item.
 
 Run `setup.ps1` directly from a clone:
 

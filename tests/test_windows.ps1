@@ -149,7 +149,18 @@ if ($SavedScoop) { $env:SCOOP = $SavedScoop }
 $env:USERPROFILE = $SavedProfile
 
 # Task 8: steps and setup.ps1. Stub scoop before dot-sourcing.
-function global:scoop { param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ScoopArgs) $global:ScoopLog += ($ScoopArgs -join ' '); $global:ScoopBuckets += ($ScoopArgs -join ' ') }
+# $global:ScoopFail lists commands (e.g. 'install extras/vlc') that exit 1.
+$global:ScoopFail = @()
+function global:scoop {
+  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ScoopArgs)
+  $Cmd = ($ScoopArgs -join ' ')
+  $global:ScoopLog += $Cmd; $global:ScoopBuckets += $Cmd
+  if ($global:ScoopFail -contains $Cmd) { $global:LASTEXITCODE = 1; return }
+  $global:LASTEXITCODE = 0
+  if ($ScoopArgs.Count -ge 3 -and $ScoopArgs[0] -eq 'bucket' -and $ScoopArgs[1] -eq 'add') {
+    New-Item -ItemType Directory -Path (Join-Path (Get-ScoopRoot) (Join-Path 'buckets' $ScoopArgs[2])) -Force | Out-Null
+  }
+}
 
 function cmp-bytes($A, $B) {
   if (-not (Test-Path $A)) { return 'missing-a' }
@@ -176,6 +187,10 @@ $StepsDir = Join-Path (Join-Path $Root 'windows') 'steps'
 . (Join-Path $StepsDir 'wsl.ps1')
 . (Join-Path $StepsDir 'wezterm.ps1')
 
+# The scoop stub makes bucket folders under Get-ScoopRoot: keep that root in
+# $Work for all step tests, never in the real %USERPROFILE%\scoop.
+$SavedStepScoop = $env:SCOOP
+$env:SCOOP = Join-Path $Work 'scoop-steps'
 $T8 = New-StepCatalog
 $global:ScoopLog = @(); $global:ScoopBuckets = @()
 Invoke-ScoopStep -Catalog $T8
@@ -190,10 +205,45 @@ $global:ScoopLog = @()
 Invoke-ScoopStep -Catalog $T8b -Verify
 Check 'step-scoop-verify-no-install' '0' ([string]$global:ScoopLog.Count)
 
+# git first (bucket add needs it), then buckets, then scoop update, then apps.
+# Fresh Scoop root that has only the main bucket, like a new Scoop install.
+$env:SCOOP = Join-Path $Work 'scoop-order'
+New-Item -ItemType Directory -Path (Join-Path $env:SCOOP (Join-Path 'buckets' 'main')) -Force | Out-Null
+$T8c = New-StepCatalog
+@($T8c | Where-Object { $_.Item -eq 'vlc' })[0].Selected = $true
+$global:ScoopLog = @()
+Invoke-ScoopStep -Catalog $T8c | Out-Null
+Check 'step-scoop-order' 'install main/git|bucket add extras|update|install main/7zip|install extras/vlc|install main/make' ($global:ScoopLog -join '|')
+
+# A failed install fails the step but still tries the other apps.
+$global:ScoopLog = @(); $global:ScoopFail = @('install extras/vlc')
+$ScoopErr = try { Invoke-ScoopStep -Catalog $T8c | Out-Null; '' } catch { $_.Exception.Message }
+$global:ScoopFail = @()
+Check 'step-scoop-failure-throws' 'scoop install failed: extras/vlc' $ScoopErr
+Check 'step-scoop-failure-continues' 'True' ([string]($global:ScoopLog -contains 'install main/make'))
+
+# A bucket that cannot be added fails its apps once; the other apps install.
+$env:SCOOP = Join-Path $Work 'scoop-badbucket'
+New-Item -ItemType Directory -Path (Join-Path $env:SCOOP (Join-Path 'buckets' 'main')) -Force | Out-Null
+$global:ScoopLog = @(); $global:ScoopFail = @('bucket add extras')
+$BucketErr = try { Invoke-ScoopStep -Catalog $T8c | Out-Null; '' } catch { $_.Exception.Message }
+$global:ScoopFail = @()
+Check 'step-scoop-bad-bucket-throws' 'scoop install failed: extras/vlc' $BucketErr
+Check 'step-scoop-bad-bucket-log' 'install main/git|bucket add extras|update|install main/7zip|install main/make' ($global:ScoopLog -join '|')
+
+# A second run adds no bucket again: every bucket folder is already there.
+$env:SCOOP = Join-Path $Work 'scoop-order'
+$global:ScoopLog = @()
+Invoke-ScoopStep -Catalog $T8c | Out-Null
+Check 'step-scoop-rerun-no-bucket-add' '0' ([string]@($global:ScoopLog | Where-Object { $_ -like 'bucket add*' }).Count)
+$env:SCOOP = Join-Path $Work 'scoop-steps'
+
 $SpaceHome = Join-Path $Work 'a b'
 New-Item -ItemType Directory -Path $SpaceHome -Force | Out-Null
 $WezSrc = Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'
+$global:ScoopLog = @()
 Invoke-WeztermStep -Items @('wezterm') -WeztermHome $SpaceHome -SrcPath $WezSrc
+Check 'step-wezterm-adds-extras' 'True' ([string]($global:ScoopLog -contains 'bucket add extras'))
 Check 'step-wezterm-copies-config' 'same' (cmp-bytes (Join-Path $SpaceHome '.wezterm.lua') (Join-Path (Join-Path (Join-Path $Root 'configs') 'wezterm') 'windows.lua'))
 
 . (Join-Path $StepsDir 'profile.ps1')
@@ -223,6 +273,96 @@ Check 'step-hotkeys-creates-personal' 'same' (cmp-bytes (Join-Path $AhkDir 'pers
 [IO.File]::WriteAllText((Join-Path $AhkDir 'personal.ahk'), '; mine', (New-Object Text.UTF8Encoding($false)))
 Invoke-HotkeysStep -Items @('hotkeys') -HotkeysHome $AhkHome -NoLaunch | Out-Null
 Check 'step-hotkeys-keeps-personal' '; mine' ([IO.File]::ReadAllText((Join-Path $AhkDir 'personal.ahk')))
+
+# SSH key: find an existing pair, plan a new key, print the public key.
+. (Join-Path $StepsDir 'sshkey.ps1')
+$SshHome = Join-Path $Work 'ssh home'
+Check 'step-sshkey-none' '' (Find-StepSshKey -HomeDir $SshHome)
+$SshDir = Join-Path $SshHome '.ssh'
+New-Item -ItemType Directory -Path $SshDir -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $SshDir 'lonely.pub'), 'ssh-ed25519 AAAA lonely', (New-Object Text.UTF8Encoding($false)))
+Check 'step-sshkey-pub-without-private' '' (Find-StepSshKey -HomeDir $SshHome)
+$SshPlan = Invoke-SshKeyStep -Items @('ssh-key') -Verify -HomeDir $SshHome | Out-String
+Check 'step-sshkey-verify-plans' 'True' ([string]($SshPlan -match 'would create'))
+[IO.File]::WriteAllText((Join-Path $SshDir 'id_ed25519'), 'private', (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText((Join-Path $SshDir 'id_ed25519.pub'), "ssh-ed25519 AAAATEST user@host`n", (New-Object Text.UTF8Encoding($false)))
+Check 'step-sshkey-found' (Join-Path $SshDir 'id_ed25519') (Find-StepSshKey -HomeDir $SshHome)
+$SshShown = & { Show-StepSshKey -HomeDir $SshHome } 6>&1 | Out-String
+Check 'step-sshkey-show-prints-key' 'True' ([string]($SshShown -match 'ssh-ed25519 AAAATEST user@host'))
+# The standard name wins over a pair that sorts before it.
+[IO.File]::WriteAllText((Join-Path $SshDir 'aaa'), 'private', (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText((Join-Path $SshDir 'aaa.pub'), 'ssh-ed25519 AAAA aaa', (New-Object Text.UTF8Encoding($false)))
+Check 'step-sshkey-prefers-standard' (Join-Path $SshDir 'id_ed25519') (Find-StepSshKey -HomeDir $SshHome)
+
+# ssh-keygen stub: logs its arguments; -y prints a public key, else it writes
+# the pair named by -f.
+$global:KeygenLog = @()
+function global:ssh-keygen {
+  $global:KeygenLog += ($args -join ' ')
+  $global:LASTEXITCODE = 0
+  if ($args -contains '-y') { Write-Output 'ssh-ed25519 AAAAREBUILT'; return }
+  $F = $args[[Array]::IndexOf($args, '-f') + 1]
+  [IO.File]::WriteAllText($F, 'private', (New-Object Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllText(($F + '.pub'), "ssh-ed25519 AAAANEW`n", (New-Object Text.UTF8Encoding($false)))
+}
+# No console: warn and leave everything alone.
+$NoConHome = Join-Path $Work 'ssh nocon'
+Invoke-SshKeyStep -Items @('ssh-key') -HomeDir $NoConHome -Interactive $false 3>$null | Out-Null
+Check 'step-sshkey-no-console-skips' '0' ([string]$global:KeygenLog.Count)
+# Console: create the pair; a second run finds it and does not run ssh-keygen.
+Invoke-SshKeyStep -Items @('ssh-key') -HomeDir $NoConHome -Interactive $true | Out-Null
+Check 'step-sshkey-creates' (Join-Path (Join-Path $NoConHome '.ssh') 'id_ed25519') (Find-StepSshKey -HomeDir $NoConHome)
+Invoke-SshKeyStep -Items @('ssh-key') -HomeDir $NoConHome -Interactive $true | Out-Null
+Check 'step-sshkey-idempotent' '1' ([string]$global:KeygenLog.Count)
+# A private key with no .pub is never overwritten: its .pub is rebuilt.
+$PrivHome = Join-Path $Work 'ssh privonly'
+$PrivKey = Join-Path (Join-Path $PrivHome '.ssh') 'id_ed25519'
+New-Item -ItemType Directory -Path (Join-Path $PrivHome '.ssh') -Force | Out-Null
+[IO.File]::WriteAllText($PrivKey, 'keep me', (New-Object Text.UTF8Encoding($false)))
+$global:KeygenLog = @()
+Invoke-SshKeyStep -Items @('ssh-key') -HomeDir $PrivHome -Interactive $true | Out-Null
+Check 'step-sshkey-private-kept' 'keep me' ([IO.File]::ReadAllText($PrivKey))
+Check 'step-sshkey-pub-rebuilt' "ssh-ed25519 AAAAREBUILT`n" ([IO.File]::ReadAllText($PrivKey + '.pub'))
+Check 'step-sshkey-rebuild-only' ('-y -f ' + $PrivKey) ($global:KeygenLog -join '|')
+# A .pub with no private half is backed up before ssh-keygen replaces it.
+$PubHome = Join-Path $Work 'ssh pubonly'
+New-Item -ItemType Directory -Path (Join-Path $PubHome '.ssh') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path (Join-Path $PubHome '.ssh') 'id_ed25519.pub'), 'ssh-ed25519 AAAAELSEWHERE', (New-Object Text.UTF8Encoding($false)))
+Invoke-SshKeyStep -Items @('ssh-key') -HomeDir $PubHome -Interactive $true | Out-Null
+$PubBak = @(Get-ChildItem -Path (Join-Path $PubHome '.ssh') -Filter 'id_ed25519.pub.bak.*')
+Check 'step-sshkey-lonely-pub-backup' 'ssh-ed25519 AAAAELSEWHERE' $(if ($PubBak.Count -eq 1) { [IO.File]::ReadAllText($PubBak[0].FullName) } else { 'backups: ' + $PubBak.Count })
+Remove-Item Function:\ssh-keygen
+
+# Check step: OK for what is there, MISSING for what is not, count in -Missing.
+. (Join-Path $StepsDir 'check.ps1')
+function global:git { }
+function global:make { }
+$env:SCOOP = Join-Path $Work 'scoop-check'
+$CheckApp = Join-Path $env:SCOOP (Join-Path 'apps' (Join-Path '7zip' '24.08'))
+New-Item -ItemType Directory -Path $CheckApp -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $CheckApp 'install.json'), '{}', (New-Object Text.UTF8Encoding($false)))
+# A version folder with no install.json is a failed install: MISSING.
+New-Item -ItemType Directory -Path (Join-Path $env:SCOOP (Join-Path 'apps' (Join-Path 'vlc' '3.0'))) -Force | Out-Null
+$CheckCat = New-StepCatalog
+@($CheckCat | Where-Object { $_.Item -eq 'vlc' })[0].Selected = $true
+$CheckCat += (New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-key'; Label = 'SSH key (ed25519)'; Default = 'on'; Action = 'step:ssh-key'; Key = 'win-setup.ssh-key'; Selected = $true; New = $false })
+$CheckMissing = -1
+$CheckOut = Invoke-CheckStep -Catalog $CheckCat -HomeDir $SshHome -Missing ([ref]$CheckMissing) | Out-String
+Check 'step-check-ok-git' 'True' ([string]($CheckOut -match '(?m)^OK +git'))
+Check 'step-check-ok-scoop-app' 'True' ([string]($CheckOut -match '(?m)^OK +7-Zip'))
+Check 'step-check-missing-scoop-app' 'True' ([string]($CheckOut -match '(?m)^MISSING VLC'))
+Check 'step-check-ok-sshkey' 'True' ([string]($CheckOut -match '(?m)^OK +SSH key'))
+Check 'step-check-missing-count' '1' ([string]$CheckMissing)
+# No key and no console: SKIPPED, not counted. With a console: MISSING.
+$SkipCat = @($CheckCat | Where-Object { $_.Item -eq 'ssh-key' })
+$SkipHome = Join-Path $Work 'ssh none'
+$SkipMissing = -1
+$SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $false | Out-String
+Check 'step-check-sshkey-skipped' 'True|0' (([string]($SkipOut -match '(?m)^SKIPPED SSH key')) + '|' + $SkipMissing)
+$SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $true | Out-String
+Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^MISSING SSH key')) + '|' + $SkipMissing)
+Remove-Item Function:\git, Function:\make
+$env:SCOOP = Join-Path $Work 'scoop-steps'
 
 # setup.ps1 run as its own process must load lib, menu and steps itself.
 $Shell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
@@ -275,6 +415,8 @@ Check 'setup-step-failure-exit' '1' ([string]$FailCode)
 
 $ElevMsg = try { Invoke-Setup -Yes -Config $FailCfg2 -ConfigExplicit -CatalogPath $FailCatalog -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $true -ScoopPresent $false | Out-Null; '' } catch { $_.Exception.Message }
 Check 'setup-elevated-scoop-missing' 'True' ([string]($ElevMsg -match 'Administrator|Scoop'))
+
+if ($SavedStepScoop) { $env:SCOOP = $SavedStepScoop } else { Remove-Item Env:SCOOP -ErrorAction SilentlyContinue }
 
 # Menu (Task 7). Mirrors the Task 4 key tests from lib/menu.sh.
 function New-TestState { return @{ Cursor = 0; OpenGroup = ''; Top = 0; Rows = 20; Result = ''; GroupCursor = 0 } }
