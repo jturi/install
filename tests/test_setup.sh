@@ -500,6 +500,24 @@ check login-shell-no-passwd "ok" "$( (set -e; id() { return 1; }; USER=nobody-he
 
 # zsh login shell: ask mode without a terminal never changes anything.
 
+# Cross-engine check: PowerShell load+save must equal the bash save and the
+# expected bytes. Skipped when powershell.exe is missing.
+if command -v powershell.exe >/dev/null 2>&1; then
+  ps_fixture="$(wslpath -w "${ROOT}/tests/fixtures/catalog.txt")"
+  ps_input="$(wslpath -w "${ROOT}/tests/fixtures/config.input")"
+  ps_out="$(wslpath -w "${WORK}/ps-save")"
+  mkdir -p "${WORK}/ps-save"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+    ". '$(wslpath -w "${ROOT}/windows/lib.ps1")';" \
+    " \$c = Import-Catalog -Path '${ps_fixture}';" \
+    " \$e = Import-Selection -Path '${ps_input}' -Catalog \$c;" \
+    " Save-Selection -Path '${ps_out}/config' -Catalog \$c -Extra \$e" >/dev/null 2>&1
+  (save_fixture "${WORK}/bash-save/config")
+  check cross-engine-ps-match "same" "$(cmp -s "${WORK}/ps-save/config" "${WORK}/bash-save/config" && echo same || echo differs)"
+  check cross-engine-expected "same" "$(cmp -s "${WORK}/ps-save/config" "${ROOT}/tests/fixtures/config.expected" && echo same || echo differs)"
+else
+  printf 'SKIP cross-engine: no powershell.exe\n'
+fi
 
 # keepers-20 smoke: extract round-trip, duh, hgrep, down-usage.
 keeper_home="${WORK}/keeper_home"

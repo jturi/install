@@ -2,8 +2,9 @@
 
 Bootstrap a new Linux, macOS or Windows machine. On Linux and macOS,
 `setup.sh` installs the basic packages and copies the base configs (configs come
-from the [dotfiles](../dotfiles) repo). On Windows, `bootstrap.ps1` installs
-Scoop and the Windows apps from `catalog.txt`.
+from the [dotfiles](../dotfiles) repo). On Windows, `bootstrap.ps1` downloads
+the repo and runs `setup.ps1`, which installs Scoop, the Windows apps from
+`catalog.txt`, and the selected configs.
 
 ## Quick start
 
@@ -115,41 +116,56 @@ Run it as often as you like; a second run changes nothing.
 
 ## Windows
 
-`bootstrap.ps1` runs on the Windows PowerShell 5.1 that ships with Windows. It:
+`bootstrap.ps1` runs on the Windows PowerShell 5.1 that ships with Windows. It
+stops if PowerShell runs as Administrator, downloads the repo to `~\install`,
+and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
 
-1. Stops if PowerShell runs as Administrator.
-2. Downloads the repo to `~\install`.
-3. Hands off to `setup.ps1` if the repo has one (the planned menu installer,
-   see `docs/superpowers/specs/`). It doesn't exist yet, so steps 4 to 6 run.
-4. Sets the CurrentUser execution policy to `RemoteSigned` if it is
-   `Undefined`, `Restricted` or `AllSigned`, then installs
-   [Scoop](https://scoop.sh) if it is missing.
-5. Installs `git` with Scoop. Scoop needs it to add buckets.
-6. Installs every `windows` item in `catalog.txt` that is `on` by default
-   (7-Zip, curl, rustup), adding Scoop buckets as needed. `WezTerm` also
-   copies `configs/wezterm/windows.lua` to `~\.wezterm.lua`, backing up a
-   different file first. Steps that need `setup.ps1` (PowerShell profile,
-   VS Code, Flameshot, hotkeys, WSL) print a warning and are skipped.
+`setup.ps1` shows the selection menu, saves the choice to
+`%USERPROFILE%\.local\bootstrap\config`, then:
 
-Reruns are safe. An installed Scoop app shows `SKIP`, an unchanged
-`.wezterm.lua` is left alone, and a failed `scoop` command is retried once. A
-failed item doesn't stop the rest. The run ends with an
-`OK`/`SKIP`/`WARN`/`FAILED` summary, and a log goes to
-`~\.local\bootstrap\logs\bootstrap-<time>.log`.
+1. Sets the CurrentUser execution policy to `RemoteSigned` if it is
+   `Undefined`, `Restricted` or `AllSigned`. Scoop and the profile need it.
+2. Installs [Scoop](https://scoop.sh) if it is missing.
+3. Installs the ticked `scoop:` items from `catalog.txt`, plus `git` and
+   `make`, adding Scoop buckets as needed.
+4. Runs the ticked steps:
+   - **PowerShell profile** (on by default): copies
+     `configs/windows/profile.ps1` to
+     `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
+     `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real
+     Documents folder, also when OneDrive moved it).
+   - **AutoHotkey hotkeys**: installs AutoHotkey v2
+     (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk`
+     to `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
+     `configs/windows/personal.ahk.example` once (never overwritten), adds a
+     `hotkeys.lnk` Startup shortcut and starts the script.
+   - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`,
+     **Flameshot**, **WSL (Ubuntu)**, and **WezTerm** with
+     `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
 
-Options are environment variables, set before running the script:
+A changed config file is backed up first as `<file>.bak.<timestamp>`. A failed
+step doesn't stop the next one; the exit code is 1 if any step failed.
+
+Run `setup.ps1` directly from a clone:
+
+```powershell
+git clone https://github.com/jturi/install.git ~/repos/install
+cd ~/repos/install
+powershell -ExecutionPolicy Bypass -File ./setup.ps1 -DryRun
+```
+
+Flags mirror `setup.sh`: `-Yes` (no menu: saved selection, else defaults),
+`-DryRun` (plan only, writes nothing), `-Select` (menu then save only),
+`-Config <path>` (use that file instead of the saved one), `-Verify`
+(read-only pre-checks, changes nothing).
+
+`bootstrap.ps1` options are environment variables, set before running it:
 
 | Variable | Does |
 |----------|------|
-| `INSTALL_ITEMS` | Comma list of extra catalog items, e.g. `wezterm,vlc`. `-rustup` drops a default. `all` selects every Windows item |
-| `INSTALL_DRYRUN` | `1`: download only, print the Scoop commands |
+| `INSTALL_DRYRUN` | `1`: download, then run `setup.ps1 -DryRun` |
 | `INSTALL_DIR` | Where the repo goes (default `~\install`) |
 | `GITHUB_TOKEN` | Token for the private repo |
-
-```powershell
-$env:INSTALL_ITEMS = 'wezterm,vlc,greenshot'
-irm https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
-```
 
 `bootstrap.sh` takes `INSTALL_DIR`, `SETUP_ARGS` and `GITHUB_TOKEN` the same way.
 
