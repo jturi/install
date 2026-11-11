@@ -88,9 +88,9 @@ printf '%s\n' 'shell|tmux|tmux|macos|on|pkg' 'shell|less|less|macos|on|pkg' 'con
 check catalog-hides-unmapped "shell.tmux configs.tmux" "$(catalog_load "${WORK}/mapped.txt" macos 0; catalog_hide_unmapped macos; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do catalog_key "${i}"; done | xargs)"
 
 # --ssh-server on Arch: openssh is listed once.
-check arch-sshd-dedup "1" "$(load_catalog arch; config_load "${WORK}/none"; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
+check arch-sshd-dedup "1" "$(pkg_installed() { return 1; }; load_catalog arch; config_load "${WORK}/none"; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -m1 'Installing (arch)' | tr ' ' '\n' | grep -c '^openssh$')"
 # An empty selection plus the SSH server must not trip set -u on bash 3.2.
-check empty-selection-ssh-server "openssh" "$(load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_SEL[@]}; i++)); do CAT_SEL[i]=0; done; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -o 'openssh$' | head -n 1)"
+check empty-selection-ssh-server "openssh" "$(pkg_installed() { return 1; }; load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_SEL[@]}; i++)); do CAT_SEL[i]=0; done; set_selection extras.ssh-server 1; DRY_RUN=1 install_packages arch 2>/dev/null | grep -o 'openssh$' | head -n 1)"
 check unticked-package-not-installed "0" "$(load_catalog debian; config_load "${WORK}/none"; set_selection shell.vim 0; selected_packages debian | grep -c '^vim$')"
 # Config steps below use the default selection.
 load_catalog debian
@@ -264,7 +264,7 @@ check wezterm-config-copied "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lu
 # No Scoop: warn, still copy the config (as kitty does when its package fails).
 nobin="${WORK}/nobin"
 mkdir -p "${nobin}"
-for tool in cat cmp cp date dirname mkdir rm; do ln -s "$(command -v "${tool}")" "${nobin}/${tool}"; done
+for tool in cat cmp cp date dirname mkdir mv rm; do ln -s "$(command -v "${tool}")" "${nobin}/${tool}"; done
 rm -f "${win_home}/.wezterm.lua"
 check wezterm-no-scoop-warns "scoop not found" "$(PATH="${nobin}" WINDOWS_HOME="${win_home}" install_windows_terminal 2>&1 | grep -o 'scoop not found')"
 check wezterm-no-scoop-config "same" "$(cmp -s "${ROOT}/configs/wezterm/windows.lua" "${win_home}/.wezterm.lua" && echo same)"
@@ -519,12 +519,6 @@ else
   printf 'SKIP cross-engine: no powershell.exe\n'
 fi
 
-if ((FAILS)); then
-  printf '%d test(s) failed\n' "${FAILS}"
-  exit 1
-fi
-echo "all tests passed"
-
 # keepers-20 smoke: extract round-trip, duh, hgrep, down-usage.
 keeper_home="${WORK}/keeper_home"
 mkdir -p "${keeper_home}"
@@ -541,3 +535,86 @@ check keepers-duh "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mk
 check keepers-hgrep "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; type -t hgrep | grep -q function && echo 0')"
 check keepers-alg "psmem" "$(bash -c 'shopt -s expand_aliases; source '"${ROOT}"'/configs/bash_extras; alg psmem 2>/dev/null | grep -o psmem | head -n 1')"
 check keepers-down-usage "1" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; down >/dev/null 2>&1; echo $?')"
+
+# --- Idempotent, failsafe, verbose -------------------------------------------
+
+# Installed packages are skipped; nothing installed means no package manager.
+pm_log="${WORK}/pm.log"
+check pkgs-all-present-skips-pm "0" "$( : >"${pm_log}"; pkg_installed() { return 0; }; pkg_install() { echo "$@" >>"${pm_log}"; }; install_missing debian vim git >/dev/null 2>&1; wc -l <"${pm_log}" | tr -d ' ')"
+check pkgs-only-missing "debian git" "$( : >"${pm_log}"; pkg_installed() { [[ "$2" == vim ]]; }; pkg_install() { echo "$@" >>"${pm_log}"; }; install_missing debian vim git >/dev/null 2>&1; xargs <"${pm_log}")"
+# A failed batch retries one by one and names only the bad package.
+check pkgs-batch-fallback "bad" "$( pkg_installed() { return 1; }; pkg_install() { shift; [[ " $* " != *" bad "* ]]; }; install_missing debian vim bad git 2>&1 >/dev/null | grep -o 'could not install: .*' | sed 's/could not install: //')"
+check pkgs-batch-fallback-fails "1" "$( (pkg_installed() { return 1; }; pkg_install() { shift; [[ " $* " != *" bad "* ]]; }; install_missing debian vim bad) >/dev/null 2>&1; echo $?)"
+# Arch never does a partial upgrade (-Sy without -u).
+check arch-no-partial-upgrade "-Syu" "$(DRY_RUN=1 pkg_install arch vim 2>&1 | grep -o -- '-Sy[u]*')"
+# apt waits for the dpkg lock instead of failing on a fresh Ubuntu.
+check apt-lock-timeout "1" "$(apt_refresh() { :; }; DRY_RUN=1 pkg_install debian vim 2>&1 | grep -c 'DPkg::Lock::Timeout=300')"
+
+# Backups never overwrite each other within one second.
+bk="${WORK}/bk"; mkdir -p "${bk}"; echo a >"${bk}/f"
+(backup_file "${bk}/f"; backup_file "${bk}/f"; backup_file "${bk}/f") >/dev/null 2>&1
+check backup-unique-names "3" "$(find "${bk}" -name 'f.bak.*' | wc -l | tr -d ' ')"
+
+# Atomic copy: no temp left, symlink replaced (not written through), mode set.
+ac="${WORK}/ac"; mkdir -p "${ac}"; echo target >"${ac}/linked"; ln -s "${ac}/linked" "${ac}/dst"
+(install_file "${ROOT}/configs/nanorc" "${ac}/dst") >/dev/null 2>&1
+check atomic-replaces-symlink "file target" "$([[ -L "${ac}/dst" ]] && echo link || echo file) $(cat "${ac}/linked")"
+check atomic-no-temp-left "0" "$(find "${ac}" -name '*.tmp.*' | wc -l | tr -d ' ')"
+(atomic_copy "${ROOT}/configs/nanorc" "${ac}/exe" 755) >/dev/null 2>&1
+check atomic-mode "yes" "$([[ -x "${ac}/exe" ]] && echo yes)"
+check atomic-fails-cleanly "1 0" "$( (atomic_copy "${ROOT}/configs/nanorc" "${WORK}/no/such/dir/f") >/dev/null 2>&1; echo "$? $(find "${WORK}" -path '*no/such*' | wc -l | tr -d ' ')")"
+
+# Reruns change nothing: second config install makes no backups.
+idem="${WORK}/idem"; mkdir -p "${idem}"
+(load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) >/dev/null 2>&1
+before="$(find "${idem}" -name '*.bak.*' | wc -l | tr -d ' ')"
+(load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) >/dev/null 2>&1
+check configs-rerun-no-backups "${before}" "$(find "${idem}" -name '*.bak.*' | wc -l | tr -d ' ')"
+check configs-rerun-says-unchanged "yes" "$( (load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) 2>&1 | grep -c 'unchanged' | grep -q '^[1-9]' && echo yes)"
+
+# Summary: OK, WARN (step warned) and FAILED; only FAILED fails the run.
+sum_out="$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR=""
+  run_step good true; run_step warned warn "heads up"; run_step bad false
+  set +e; print_summary; echo "rc=$?") 2>&1)"
+check summary-ok "1" "$(grep -c 'OK .* good' <<<"${sum_out}")"
+check summary-warn "1" "$(grep -c 'WARN .* warned' <<<"${sum_out}")"
+check summary-warn-text "1" "$(grep -c -- '- heads up' <<<"${sum_out}")"
+check summary-failed "1" "$(grep -c 'FAILED .* bad' <<<"${sum_out}")"
+check summary-rc "rc=1" "$(grep -o 'rc=[0-9]' <<<"${sum_out}")"
+check summary-warn-only-rc "rc=0" "$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR=""; run_step w warn x; set +e; print_summary; echo "rc=$?") 2>/dev/null | grep -o 'rc=[0-9]')"
+
+# Lock: a live owner blocks a second run; a dead owner's lock is taken over.
+lk="${WORK}/lock"
+check lock-live-blocks "1" "$( (take_lock "${lk}"; (take_lock "${lk}") >/dev/null 2>&1; echo $?) 2>/dev/null)"
+rm -rf "${lk}"; mkdir -p "${lk}"; echo 999999 >"${lk}/pid"
+check lock-stale-taken "$$" "$( (take_lock "${lk}") >/dev/null 2>&1; cat "${lk}/pid")"
+
+# A real (non-dry) run takes the lock, writes a log, prunes old logs, and
+# releases the lock. Steps are stubbed by run_main.
+m_reset; mkdir -p "${m_home}/.local/bootstrap/logs"
+for i in $(seq 1 25); do : >"${m_home}/.local/bootstrap/logs/setup-20200101_0000$(printf %02d "${i}").log"; done
+M_EXTRA='KEEP_LOGS=20'; out="$(run_main --yes)"; rc=$?
+check run-real-rc "0" "${rc}"
+check run-real-log-line "1" "$(grep -c 'Logging to .*setup-.*\.log' <<<"${out}")"
+check run-real-logs-pruned "20" "$(find "${m_home}/.local/bootstrap/logs" -name 'setup-*.log' | wc -l | tr -d ' ')"
+check run-real-lock-released "no" "$([[ -e "${m_home}/.local/bootstrap/lock" ]] && echo yes || echo no)"
+check run-real-log-has-summary "1" "$(cat "${m_home}"/.local/bootstrap/logs/setup-*.log | grep -c '==> Summary')"
+m_reset; out="$(run_main --yes --no-log)"
+check run-no-log "0" "$(find "${m_home}/.local/bootstrap" -name 'setup-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+
+# Catalog: a duplicate key on one platform is an error.
+printf '%s\n' 'a|x|X|linux|on|pkg' 'a|x|X2|linux|on|pkg' >"${WORK}/dup.txt"
+check catalog-duplicate-key "1" "$( (catalog_load "${WORK}/dup.txt" linux 0) 2>&1 | grep -c 'duplicate')"
+printf '%s\n' 'a|x|X|linux|on|pkg' 'a|x|X2|macos|on|pkg' >"${WORK}/dup2.txt"
+check catalog-same-key-other-platform "1" "$( (catalog_load "${WORK}/dup2.txt" linux 0; echo "${#CAT_ITEM[@]}") 2>/dev/null)"
+
+# `sh setup.sh` re-runs itself under bash.
+check sh-reexecs-bash "1" "$(sh "${ROOT}/setup.sh" --help 2>/dev/null | grep -c -- '--dry-run      Print')"
+# Version line: git describe, or the .source file from bootstrap.sh.
+check version-line "1" "$(OS_RELEASE_FILE="${WORK}/os-debian" TARGET_HOME="${WORK}/vh" bash "${ROOT}/setup.sh" --dry-run --yes </dev/null 2>&1 | grep -c '==> install .*, bash ')"
+
+if ((FAILS)); then
+  printf '%d test(s) failed\n' "${FAILS}"
+  exit 1
+fi
+echo "all tests passed"

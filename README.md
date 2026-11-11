@@ -1,55 +1,152 @@
 # install
 
-Bootstrap a new Linux or macOS machine. One script installs the basic packages and
-copies the base configs. Configs come from the
-[dotfiles](../dotfiles) repo.
+Bootstrap a new Linux, macOS or Windows machine. On Linux and macOS,
+`setup.sh` installs the basic packages and copies the base configs (configs come
+from the [dotfiles](../dotfiles) repo). On Windows, `bootstrap.ps1` downloads
+the repo and runs `setup.ps1`, which installs Scoop, the Windows apps from
+`catalog.txt`, and the selected configs.
 
 ## Quick start
 
-One line, no git needed (downloads the repo to `~/install` and runs it):
+Each script downloads this repo to `~/install` and runs the installer. If
+`~/install` already exists, it is moved to `~/install.bak.<timestamp>` first.
+A git clone there is pulled instead (Linux and macOS only).
+
+### Linux and macOS
+
+Paste into a terminal (bash or zsh):
 
 ```sh
-mkdir -p ~/install && curl -fsSL https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+curl -fsSL https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | sh
 ```
 
-No curl (minimal Debian/Ubuntu)? Use wget:
+No curl (minimal Debian/Ubuntu)? Use `wget -qO- <same URL> | sh`. To pass
+`setup.sh` options, set `SETUP_ARGS`:
 
 ```sh
-mkdir -p ~/install && wget -qO- https://github.com/jturi/install/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C ~/install && ~/install/setup.sh
+curl -fsSL https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | SETUP_ARGS="--yes" sh
 ```
 
-Add options at the end, for example `... && ~/install/setup.sh --yes`.
-The curl line also works on macOS (curl and tar are built in).
+You can also paste the whole of [`bootstrap.sh`](bootstrap.sh) into a terminal.
+It runs in a subshell, so it can't close your shell.
 
-## Windows quick start
+### Windows
 
-Native Windows uses `setup.ps1` (PowerShell 5.1+). One line, no git needed
-(downloads the repo zip, unpacks it to `%USERPROFILE%\install` and runs it).
-The GitHub zip holds an `install-main` folder, so the line copies its
-contents up one level. `-ExecutionPolicy Bypass` is needed because a fresh
-Windows blocks local scripts:
+Paste into a normal PowerShell window, not one run as Administrator (Scoop
+refuses elevated installs):
 
 ```powershell
-$z = "$env:TEMP\install.zip"; Invoke-WebRequest -UseBasicParsing -Uri https://github.com/jturi/install/archive/refs/heads/main.zip -OutFile $z; Expand-Archive -Force $z "$env:TEMP\install-src"; New-Item -ItemType Directory -Force "$HOME\install" | Out-Null; Copy-Item -Recurse -Force "$env:TEMP\install-src\install-main\*" "$HOME\install"; powershell -ExecutionPolicy Bypass -File "$HOME\install\setup.ps1"
+irm https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
 ```
 
-What the Windows run does besides Scoop apps:
+You can also paste the whole of [`bootstrap.ps1`](bootstrap.ps1) into PowerShell.
+See [Windows](#windows) for what it does and its options.
 
-- Sets the execution policy to `RemoteSigned` for the current user when it
-  is `Restricted`, `AllSigned` or unset. Scoop and the profile need it.
-- **PowerShell profile** (on by default): copies
-  `configs/windows/profile.ps1` to
-  `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
-  `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real Documents
-  folder, also when OneDrive moved it). A different old file is kept as
-  `.bak.<timestamp>`.
-- **AutoHotkey hotkeys** (off by default): installs AutoHotkey v2
-  (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk` to
-  `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
-  `configs/windows/personal.ahk.example` once (never overwritten), adds a
-  `hotkeys.lnk` Startup shortcut and starts the script.
+### Private repo
 
-Or clone it and run with bypassed execution policy:
+While the repo is private, the one-liners need a GitHub token with read access
+to it:
+
+```sh
+export GITHUB_TOKEN=<token>
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/jturi/install/main/bootstrap.sh | sh
+```
+
+```powershell
+$env:GITHUB_TOKEN = '<token>'
+irm -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } https://raw.githubusercontent.com/jturi/install/main/bootstrap.ps1 | iex
+```
+
+To download the repo, the scripts use `GITHUB_TOKEN` if it is set, then
+`gh auth token` if `gh` is logged in. If neither works, they ask for a token
+when the download fails. A pasted copy of the script needs no token to start.
+
+### Clone instead
+
+```sh
+git clone https://github.com/jturi/install.git ~/repos/install
+cd ~/repos/install
+./setup.sh            # asks once, then installs packages + configs
+./setup.sh --dry-run  # show what would run, change nothing
+```
+
+Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--no-packages`, `--no-configs`,
+`--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-key`, `--no-ssh-key`,
+`--zsh-default`, `--no-zsh-default`, `--debug`, `--no-log`, `-h/--help`.
+
+Run it as your normal user. The script uses `sudo` for the package manager
+only. It runs as root without `sudo` when you are root.
+
+## Reruns, logs and safety
+
+Run it as often as you like; a second run changes nothing.
+
+- **Idempotent.** Installed packages are checked first (`pacman -Q`,
+  `dpkg-query`, `rpm -q`, `brew list`). If nothing is missing, the package
+  manager doesn't run at all: no sudo, no network. A config identical to the repo
+  file is left alone, and an existing SSH key, TPM or login shell is kept.
+- **Verbose.** Each step prints a header, and each command that changes the
+  machine is printed (`$ cmd`) before it runs. `--dry-run` prints the same
+  commands without running them. `--debug` traces every shell line (`set -x`).
+  The summary shows each step with its time and `OK`, `WARN` (with the warning
+  text) or `FAILED`.
+- **Logged.** Every real run is copied to
+  `~/.local/bootstrap/logs/setup-<time>.log`, and the newest 20 logs are kept.
+  `--no-log` turns this off. The first line names the version: the git commit,
+  or the commit `bootstrap.sh` downloaded (saved in `.source`).
+- **Failsafe.**
+  - A failed step doesn't stop the next one. The exit code is 1 only if a step
+    failed, so a rerun retries.
+  - If a batch package install fails (apt and dnf fail the whole batch for one
+    bad name), each package is retried alone and the failures are named.
+  - apt waits up to 5 minutes for the dpkg lock, which `unattended-upgrades`
+    holds on a fresh Ubuntu. Package lists are refreshed only when they are
+    older than 6 hours.
+  - Configs are written to a temp file and renamed into place, so an interrupted
+    run never leaves a half-written `.zshrc`. Every changed file is backed up
+    first (`<file>.bak.<time>`, with a counter if one exists).
+  - sudo is checked once before the first step and kept valid until the end, so
+    a long install never stops halfway for a password.
+  - A lock (`~/.local/bootstrap/lock`) stops two runs at once. A lock left by a
+    killed run is taken over.
+  - `sh setup.sh` re-runs itself under bash.
+- **Arch:** packages install with `pacman -Syu --needed`, because Arch doesn't
+  support partial upgrades (`-Sy` alone). So when something is missing, the run
+  also upgrades the system.
+
+## Windows
+
+`bootstrap.ps1` runs on the Windows PowerShell 5.1 that ships with Windows. It
+stops if PowerShell runs as Administrator, downloads the repo to `~\install`,
+and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
+
+`setup.ps1` shows the selection menu, saves the choice to
+`%USERPROFILE%\.local\bootstrap\config`, then:
+
+1. Sets the CurrentUser execution policy to `RemoteSigned` if it is
+   `Undefined`, `Restricted` or `AllSigned`. Scoop and the profile need it.
+2. Installs [Scoop](https://scoop.sh) if it is missing.
+3. Installs the ticked `scoop:` items from `catalog.txt`, plus `git` and
+   `make`, adding Scoop buckets as needed.
+4. Runs the ticked steps:
+   - **PowerShell profile** (on by default): copies
+     `configs/windows/profile.ps1` to
+     `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
+     `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real
+     Documents folder, also when OneDrive moved it).
+   - **AutoHotkey hotkeys**: installs AutoHotkey v2
+     (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk`
+     to `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
+     `configs/windows/personal.ahk.example` once (never overwritten), adds a
+     `hotkeys.lnk` Startup shortcut and starts the script.
+   - **VS Code** with the extensions in `configs/windows/vscode_extensions.txt`,
+     **Flameshot**, **WSL (Ubuntu)**, and **WezTerm** with
+     `configs/wezterm/windows.lua` copied to `~\.wezterm.lua`.
+
+A changed config file is backed up first as `<file>.bak.<timestamp>`. A failed
+step doesn't stop the next one; the exit code is 1 if any step failed.
+
+Run `setup.ps1` directly from a clone:
 
 ```powershell
 git clone https://github.com/jturi/install.git ~/repos/install
@@ -59,25 +156,18 @@ powershell -ExecutionPolicy Bypass -File ./setup.ps1 -DryRun
 
 Flags mirror `setup.sh`: `-Yes` (no menu: saved selection, else defaults),
 `-DryRun` (plan only, writes nothing), `-Select` (menu then save only),
-`-Config <path>` (use that file instead of
-`%USERPROFILE%\.local\bootstrap\config`), `-Verify` (read-only pre-checks,
-changes nothing).
+`-Config <path>` (use that file instead of the saved one), `-Verify`
+(read-only pre-checks, changes nothing).
 
-Or clone it:
+`bootstrap.ps1` options are environment variables, set before running it:
 
-```sh
-git clone https://github.com/jturi/install.git ~/repos/install
-cd ~/repos/install
-./setup.sh            # asks once, then installs packages + configs
-./setup.sh --dry-run  # show what would run, change nothing
-```
+| Variable | Does |
+|----------|------|
+| `INSTALL_DRYRUN` | `1`: download, then run `setup.ps1 -DryRun` |
+| `INSTALL_DIR` | Where the repo goes (default `~\install`) |
+| `GITHUB_TOKEN` | Token for the private repo |
 
-Options: `-n/--dry-run`, `-y/--yes`, `--no-packages`, `--no-configs`,
-`--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-key`, `--no-ssh-key`,
-`--zsh-default`, `--no-zsh-default`, `-h/--help`.
-
-Run it as your normal user. The script uses `sudo` for the package manager
-only. It runs as root without `sudo` when you are root.
+`bootstrap.sh` takes `INSTALL_DIR`, `SETUP_ARGS` and `GITHUB_TOKEN` the same way.
 
 ## Supported distros
 
@@ -245,13 +335,27 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make ssh-key` | create an ed25519 key if none exists |
 | `make ssh-server` | install and enable the OpenSSH server |
 | `make zsh-default` | make zsh the login shell |
-| `make lint` | shellcheck |
-| `make test` | unit tests: distro detection, name mapping, configs, aliases |
+| `make lint` | shellcheck, plus a `bootstrap.ps1` parse check when `pwsh` exists |
+| `make test` | unit tests: distro detection, name mapping, configs, aliases, repo guard, `bootstrap.sh` |
 | `make check` | lint + test |
 | `make test-bash32` | unit tests + macOS dry-run under bash 3.2 |
-| `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers |
+| `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers, then a rerun that must change nothing |
 | `make test-all` | every test above |
 | `make sync-dotfiles` | refresh `tmux.conf` and `zshrc` from the dotfiles repo |
+
+## CI
+
+`.github/workflows/ci.yml` runs only when started by hand: Actions tab >
+ci > Run workflow, or `gh workflow run ci.yml --ref <branch>`. It runs:
+
+- `make check`
+- bash 3.2
+- the six-distro Docker matrix, each with a rerun check
+- a real install plus a no-op rerun on macOS with the system bash
+- a parse check and a dry run of `bootstrap.ps1` on Windows PowerShell 5.1.
+  Runners are elevated, so CI sets `INSTALL_ALLOW_ADMIN=1`.
+
+On a private repo, macOS minutes count 10x against the Actions quota.
 
 ## Sync configs from dotfiles
 
