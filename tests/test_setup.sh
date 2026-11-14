@@ -14,6 +14,9 @@ FAILS=0
 # Tests may run under WSL: never touch the real Windows home or Scoop.
 echo "6.0.0-generic" >"${WORK}/osrelease-linux"
 KERNEL_RELEASE_FILE="${WORK}/osrelease-linux"
+# The developer may run the tests over SSH or inside tmux: the SSH lock-out
+# check must not see that session.
+unset SSH_CONNECTION TMUX
 
 check() {
   local name="$1" want="$2" got="$3"
@@ -608,6 +611,74 @@ check local-only-rejected-removed "no" "$([[ -e "${dropin}" ]] && echo yes || ec
 out="$( (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${WORK}/no-ssh"; restrict_ssh_local_only debian) 2>&1)"; rc=$?
 check local-only-no-server-rc "0" "${rc}"
 check local-only-no-server-warns "1" "$(grep -c 'no SSH server installed' <<<"${out}")"
+
+# Lock-out check: over SSH, a restriction that refuses the current session is
+# removed again and the step fails. A fake sshd answers -T like the real one.
+# Private addresses come from 3-octet prefixes: tests/test_repo.sh rejects
+# literal private host IPs.
+LAN=192.168.1 TEN=10.0.0
+cat >"${WORK}/fake-sshd" <<'EOF'
+#!/bin/sh
+echo "$*" >>"${FAKE_SSHD_LOG}"
+case "$*" in
+  *-T*addr=8.8.8.8,*) echo "port 22"; echo "denyusers *" ;;
+  *-T*addr=6.6.6.6,*) exit 255 ;;
+  *-T*) echo "port 22" ;;
+esac
+exit 0
+EOF
+chmod +x "${WORK}/fake-sshd"
+lockout() {
+  rm -f "${dropin}"
+  : >"${WORK}/sshd.log"
+  (
+    eval "${ssh_stubs}"
+    SSH_CONFIG_DIR="${sshdir}" FAKE_SSHD_LOG="${WORK}/sshd.log"
+    export FAKE_SSHD_LOG
+    sshd_path() { echo "${WORK}/fake-sshd"; }
+    SSH_CONNECTION="$1" restrict_ssh_local_only debian
+  ) 2>&1
+}
+out="$(lockout "8.8.8.8 50000 ${LAN}.2 22")"; rc=$?
+check lockout-public-rc "1" "${rc}"
+check lockout-public-removed "no" "$([[ -e "${dropin}" ]] && echo yes || echo no)"
+check lockout-public-says "1" "$(grep -c 'connected over SSH from 8.8.8.8' <<<"${out}")"
+check lockout-public-no-reload "0" "$(grep -c reloaded <<<"${out}")"
+out="$(lockout "${LAN}.9 50000 ${LAN}.2 22")"; rc=$?
+check lockout-lan-rc "0" "${rc}"
+check lockout-lan-spec "1" "$(grep -c "addr=${LAN}.9,laddr=${LAN}.2,lport=22" "${WORK}/sshd.log")"
+check lockout-lan-reloaded "1" "$(grep -c reloaded <<<"${out}")"
+out="$(lockout '')"; rc=$?
+check lockout-console-rc "0" "${rc}"
+check lockout-console-no-T "0" "$(grep -c -- '-T' "${WORK}/sshd.log")"
+check lockout-config-flag "1" "$(grep -c -- "-t -f ${sshdir}/sshd_config" "${WORK}/sshd.log")"
+out="$(lockout "6.6.6.6 1 ${LAN}.2 22")"; rc=$?
+check lockout-unverifiable-rc "1" "${rc}"
+check lockout-unverifiable-removed "no" "$([[ -e "${dropin}" ]] && echo yes || echo no)"
+check lockout-unverifiable-says "1" "$(grep -c 'sshd -T failed' <<<"${out}")"
+# Inside tmux the attach-time value wins over the pane's stale copy.
+check ssh-connection-tmux "9.9.9.9 1 ${TEN}.1 22" "$( (tmux() { echo "SSH_CONNECTION=9.9.9.9 1 ${TEN}.1 22"; }; TMUX=x SSH_CONNECTION=stale ssh_connection) )"
+check ssh-connection-tmux-unset "stale" "$( (tmux() { echo "-SSH_CONNECTION"; }; TMUX=x SSH_CONNECTION=stale ssh_connection) )"
+check ssh-connection-plain "a b c d" "$(SSH_CONNECTION='a b c d' ssh_connection)"
+
+# The real sshd decides what the drop-in refuses (skipped when there is none).
+real_sshd="$(sshd_path 2>/dev/null || true)"
+if [[ -n "${real_sshd}" ]] && command -v ssh-keygen >/dev/null 2>&1; then
+  sb="${WORK}/sshd-real"
+  mkdir -p "${sb}"
+  ssh-keygen -q -t ed25519 -N '' -f "${sb}/ssh_host_ed25519_key"
+  printf 'HostKey %s/ssh_host_ed25519_key\nUsePAM no\n' "${sb}" >"${sb}/sshd_config"
+  if ( eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sb}"; restrict_ssh_local_only arch ) >/dev/null 2>&1; then
+    for a in "${LAN}.5=allow" "${TEN}.3=allow" "::1=allow" "fd00::5=allow" \
+      "8.8.8.8=deny" "100.64.1.1=deny" "2a01:4f8::1=deny" "::ffff:8.8.8.8=deny"; do
+      ip="${a%=*}" got=allow
+      "${real_sshd}" -T -f "${sb}/sshd_config" -C "user=u,host=h,addr=${ip}" 2>/dev/null | grep -qi '^denyusers \*$' && got=deny
+      check "match-${ip}" "${a#*=}" "${got}"
+    done
+  else
+    echo "SKIP real-sshd match tests: sshd -t rejects the sandbox config here"
+  fi
+fi
 
 # Check step: one line per ticked item; MISSING fails, SKIPPED does not.
 ck_home="${WORK}/ck_home"
