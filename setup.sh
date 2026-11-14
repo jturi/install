@@ -29,6 +29,7 @@ TPM_REPO="https://github.com/tmux-plugins/tpm"
 SSH_CONFIG_DIR="${SSH_CONFIG_DIR:-/etc/ssh}"
 SSH_LOCAL_CONF_NAME="20-local-network-only.conf"
 SSHD_RUN_DIR="${SSHD_RUN_DIR:-/run/sshd}"
+SYSTEMD_RUN_DIR="${SYSTEMD_RUN_DIR:-/run/systemd/system}"
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -479,6 +480,11 @@ ensure_brew() {
   fi
 }
 
+# True when systemd runs this machine (not in most containers).
+has_systemd() {
+  command -v systemctl >/dev/null 2>&1 && [[ -d "${SYSTEMD_RUN_DIR}" ]]
+}
+
 # Enable and start the SSH daemon (service is "ssh" on Debian/Ubuntu).
 enable_ssh_server() {
   local family="$1" svc=sshd
@@ -489,7 +495,7 @@ enable_ssh_server() {
     return 0
   fi
   [[ "${family}" == "debian" ]] && svc=ssh
-  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+  if ! has_systemd; then
     warn "systemd not running; enable ${svc} manually"
     return 0
   fi
@@ -562,7 +568,7 @@ reload_sshd() {
   local family="$1" svc=sshd
   [[ "${family}" != "macos" ]] || return 0
   [[ "${family}" == "debian" ]] && svc=ssh
-  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]] || return 0
+  has_systemd || return 0
   systemctl is-active --quiet "${svc}" || return 0
   as_root systemctl reload "${svc}" || warn "could not reload ${svc}; restart it to apply the restriction"
 }
@@ -1117,7 +1123,7 @@ check_ssh_server() {
     return 0
   fi
   sshd_path >/dev/null || { echo MISSING; return 0; }
-  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+  if ! has_systemd; then
     echo "SKIPPED systemd not running"
     return 0
   fi
