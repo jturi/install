@@ -16,9 +16,13 @@ PATH_RE='([A-Za-z]:\\+Users\\+[A-Za-z0-9_.-]+|(^|[^A-Za-z0-9_.])/(home|Users)/[A
 
 scan_file() {
   local f="$1" line
-  grep -InE "${IP_RE}" "${f}" 2>/dev/null | cut -d: -f1 | while read -r line; do
-    printf '%s:%s: private IP\n' "${f}" "${line}"
-  done
+  # Network ranges (x.y.z.0/n, e.g. in an sshd Match line) name no machine:
+  # drop them first. A host address, with or without a mask, still counts.
+  if grep -Iq . "${f}" 2>/dev/null; then
+    LC_ALL=C sed -E 's#[0-9]{1,3}(\.[0-9]{1,3}){2}\.0/[0-9]{1,2}##g' "${f}" | grep -nE "${IP_RE}" | cut -d: -f1 | while read -r line; do
+      printf '%s:%s: private IP\n' "${f}" "${line}"
+    done
+  fi
   grep -InE "${PATH_RE}" "${f}" 2>/dev/null | cut -d: -f1 | while read -r line; do
     printf '%s:%s: personal path\n' "${f}" "${line}"
   done
@@ -58,6 +62,8 @@ self_test() {
   printf 'ssh host %s\n' "10"".1.2.3" >"${dir}/ip10"
   printf 'ping %s\n' "192"".168.1.5" >"${dir}/ip192"
   printf 'ping %s\n' "172"".20.0.1" >"${dir}/ip172"
+  printf 'allow %s\n' "10"".1.2.3/24" >"${dir}/hostmask"
+  printf 'Match Address %s,%s\n' "10"".0.0.0/8" "192"".168.0.0/16" >"${dir}/cidr"
   printf 'mail %s\n' "someone""@corp.test" >"${dir}/email"
   printf 'cd %s\n' 'C:''\Users\someone\x' >"${dir}/winpath"
   printf 'cd %s\n' "/ho""me/someone/x" >"${dir}/homepath"
@@ -66,7 +72,7 @@ self_test() {
   printf '\xef\xbb\xbf# caf\xc3\xa9\n' >"${dir}/bom.ps1"
   printf 'ok %s %s %s\n' '/home/<name>' 'me@example.com' '8.8.8.8' >"${dir}/clean"
   out="$(scan "${dir}")"
-  for want in ip10 ip192 ip172 email winpath homepath macpath nobom.ps1; do
+  for want in ip10 ip192 ip172 hostmask email winpath homepath macpath nobom.ps1; do
     if [[ "${out}" == *"${dir}/${want}:"* ]]; then
       printf 'PASS guard-%s\n' "${want}"
     else
@@ -74,7 +80,7 @@ self_test() {
       fails=$((fails + 1))
     fi
   done
-  for want in clean bom.ps1; do
+  for want in clean cidr bom.ps1; do
     if [[ "${out}" == *"${dir}/${want}:"* ]]; then
       printf 'FAIL guard-%s wrongly reported\n' "${want}"
       fails=$((fails + 1))

@@ -16,7 +16,9 @@ shell|tmux|tmux|linux,macos|on|pkg
 shell|vim|vim|linux,macos|on|pkg
 shell|nano|nano|linux,macos|on|pkg
 shell|less|less|linux,macos|on|pkg
+shell|bash|bash 5 (Homebrew)|macos|on|pkg
 shell|bash-completion|bash-completion|linux,macos|on|pkg
+shell|fzf|fzf|linux,macos|on|pkg
 shell|man-db|man-db|linux,macos|on|pkg
 system|sudo|sudo|linux,macos|on|pkg
 system|htop|htop|linux,macos|on|pkg
@@ -55,6 +57,7 @@ terminals|ghostty|Ghostty|linux,macos|off|step:terminals
 terminals|wezterm-wsl|WezTerm on Windows|wsl|off|step:wezterm-wsl
 
 extras|ssh-server|OpenSSH server|linux,macos|off|step:ssh-server
+extras|ssh-local-only|Restrict SSH to local network only|linux,macos|off|step:ssh-local-only
 extras|ssh-key|SSH key|linux,macos|off|step:ssh-key
 extras|zsh-login|zsh as login shell|linux,macos|off|step:zsh-login
 
