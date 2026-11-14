@@ -313,6 +313,11 @@ run_step() {
   fi
 }
 
+# True when the step that ran last failed.
+last_step_failed() {
+  ((${#STEP_STATUS[@]})) && [[ "${STEP_STATUS[${#STEP_STATUS[@]} - 1]}" == "FAILED" ]]
+}
+
 # Print the result of every step, with its warnings. Returns 1 if any failed.
 print_summary() {
   local i failed=0 color line
@@ -501,6 +506,27 @@ enable_ssh_server() {
   fi
   info "Enabling ${svc}"
   as_root systemctl enable --now "${svc}"
+}
+
+# The local-network restriction failed. Do not leave open an sshd this run
+# brought up (Debian and Ubuntu start ssh as soon as the package installs).
+# One that already ran before this run is left alone: stopping it could cut
+# off the user's own remote session. Always fails, so the run exits 1.
+ssh_server_fail_closed() {
+  local family="$1" was_running="$2" svc=sshd
+  if ((was_running)); then
+    warn "sshd was already running and keeps running WITHOUT the local-network restriction; fix the error above and rerun"
+    return 1
+  fi
+  warn "not starting sshd: the local-network restriction failed"
+  # macOS: Remote Login is only turned on by enable_ssh_server, which did not run.
+  [[ "${family}" != "macos" ]] || return 1
+  [[ "${family}" == "debian" ]] && svc=ssh
+  if has_systemd; then
+    as_root systemctl disable --now "${svc}.socket" "${svc}" 2>/dev/null ||
+      as_root systemctl disable --now "${svc}" || true
+  fi
+  return 1
 }
 
 # Run a read-only command as root without printing it. sudo is primed before
@@ -1275,14 +1301,30 @@ want_menu() {
 
 # Run every ticked step, in catalog-independent install order.
 run_steps() {
-  local family="$1"
+  local family="$1" sshd_before=0 local_failed=0
+  # Measured before anything installs; steps run in subshells and cannot
+  # report state back. check_ssh_server is read-only.
+  if item_selected extras.ssh-server && action_selected step:ssh-local-only &&
+    [[ "$(check_ssh_server "${family}")" == "OK" ]]; then
+    sshd_before=1
+  fi
   if action_selected pkg || item_selected extras.ssh-server; then
     # In the main shell: PATH changes must reach the steps, which are subshells.
     [[ "${family}" != "macos" ]] || ensure_brew
     run_step packages install_packages "${family}"
   fi
-  if item_selected extras.ssh-server; then run_step "ssh server" enable_ssh_server "${family}"; fi
-  if action_selected step:ssh-local-only; then run_step "ssh local network only" restrict_ssh_local_only "${family}"; fi
+  # The restriction goes in before sshd is enabled, so it never runs without it.
+  if action_selected step:ssh-local-only; then
+    run_step "ssh local network only" restrict_ssh_local_only "${family}"
+    ! last_step_failed || local_failed=1
+  fi
+  if item_selected extras.ssh-server; then
+    if ((local_failed)); then
+      run_step "ssh server" ssh_server_fail_closed "${family}" "${sshd_before}"
+    else
+      run_step "ssh server" enable_ssh_server "${family}"
+    fi
+  fi
   if action_selected step:configs; then run_step configs install_configs "${family}"; fi
   if action_selected step:tpm; then run_step "tmux plugins" install_tpm; fi
   if action_selected step:terminals; then run_step terminals setup_terminals "${family}"; fi
