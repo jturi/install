@@ -626,3 +626,26 @@ bash_rc_file() {
 4. Test snippets in T2 and T4 contain known rough edges, flagged inline (`xargs kill` bypasses a function stub; the tmux stub needs a subshell). They are written to show the assertions. Step 2's "watch it fail for the right reason" run is where they get fixed.
 
 **Things deliberately not done here:** no refactor of `setup.sh` structure, no new catalog items, no change to what a default `--yes` run installs. The one exception is that the restriction-before-server order changes the order of steps a user sees in the summary.
+
+---
+
+## Execution Log (2026-11-14, branch `fix/hardening`)
+
+| Task | Commit | Notes |
+|---|---|---|
+| WIP | `89d75c9` | Committed separately first, as asked |
+| 1-3 | `7c05bce` | One commit: same function block, one test block. `again` also verified in a real pty under bash and zsh |
+| 4 | `145ab68` | The `-f` fix let the real-sshd match tests run (they were skipped before it) |
+| 5 | `b43dbe7`, `245c25b` | Deviation: the "sshd ran before" probe runs only when both SSH items are ticked, so ordinary runs make no extra `systemctl`/`netstat` call |
+| 6 | `a7193c6` | Container tests green except the two below. **Real-Windows check (Step 4) is the user's** |
+| 7 | `575d000` | Parse and ASCII checked in the pwsh container. CI not triggered (manual-only) |
+| 8 | `5a3f8c5` | The distro matrix now fails if non-login bash lacks the aliases (it used to fall back to a login shell) |
+| 9 | `774e62a` | |
+| 10 | dropped | D11 |
+| 11 | `70dcadb` | Correction found while writing it: a second drop-in **cannot** allow a range, because sshd adds `DenyUsers` lines up (checked with `sshd -T`). The README says to edit the Match list and untick the item |
+
+**Found, not fixed (outside this plan):**
+- `tests/test_windows.ps1`: `sshd-declined-check-skipped` and `sshd-restart-check-skipped` fail in the Linux container before and after this work: the check step counts `git` and `make` as missing there. Expected to pass on Windows with both installed.
+- The manual Windows CI job runs elevated, and `setup.ps1` refuses to run elevated without Scoop. Before Task 7 that failure was swallowed; now `bootstrap.ps1` reports it. If the job fails there, that is the reason, not the config change.
+
+**Still open:** Task 6 Step 4 (real Windows), Task 11's VM end-to-end over SSH from a public address, and the follow-up batch.
