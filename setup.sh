@@ -12,6 +12,7 @@
 #
 # Usage: ./setup.sh [--dry-run] [--yes] [--select] [--config FILE]
 #                   [--no-packages] [--no-configs] [--ssh-server]
+#                   [--ssh-local-only]
 #                   [--terminal | --no-terminal] [--ssh-key | --no-ssh-key]
 #                   [--zsh-default | --no-zsh-default] [--debug] [--no-log]
 # Started as `sh setup.sh`? Rerun under bash before any bash-only syntax.
@@ -25,12 +26,16 @@ KERNEL_RELEASE_FILE="${KERNEL_RELEASE_FILE:-/proc/sys/kernel/osrelease}"
 CATALOG_FILE="${CATALOG_FILE:-${SCRIPT_DIR}/catalog.txt}"
 TARGET_HOME="${TARGET_HOME:-${HOME}}"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
+SSH_CONFIG_DIR="${SSH_CONFIG_DIR:-/etc/ssh}"
+SSH_LOCAL_CONF_NAME="20-local-network-only.conf"
+SSHD_RUN_DIR="${SSHD_RUN_DIR:-/run/sshd}"
 
 DRY_RUN=0
 ASSUME_YES=0
 DO_PACKAGES=1
 DO_CONFIGS=1
 DO_SSH_SERVER=0
+DO_SSH_LOCAL=0
 SSH_KEY_MODE=saved # saved | create | skip
 ZSH_DEFAULT_MODE=saved # saved | change | skip
 TERMINAL_MODE=saved # saved | install | skip
@@ -75,7 +80,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
@@ -90,6 +95,7 @@ These change one run, skip the menu, and are never saved:
       --no-configs   Skip config files and tmux plugins
       --ssh-server   Also install OpenSSH server and enable sshd
                      (macOS: turn on Remote Login)
+      --ssh-local-only  Refuse SSH logins from outside the local network
       --ssh-key      Create an ed25519 SSH key if none exists
       --no-ssh-key   Do not check for an SSH key
       --zsh-default  Make zsh the login shell
@@ -248,6 +254,7 @@ apply_flag_overrides() {
     fi
   done
   ((!DO_SSH_SERVER)) || set_selection extras.ssh-server 1
+  ((!DO_SSH_LOCAL)) || set_selection extras.ssh-local-only 1
   # The server is a package: --no-packages always did skip it.
   ((DO_PACKAGES)) || set_selection extras.ssh-server 0
   [[ "${SSH_KEY_MODE}" != "create" ]] || set_selection extras.ssh-key 1
@@ -489,6 +496,109 @@ enable_ssh_server() {
   as_root systemctl enable --now "${svc}"
 }
 
+# Run a read-only command as root without printing it. sudo is primed before
+# the first step; -n never stops for a password (a dry run then just fails).
+root_quiet() {
+  if is_root; then "$@"; else sudo -n "$@"; fi
+}
+
+# Print the sshd binary; it is often in /usr/sbin, off a normal user's PATH.
+sshd_path() {
+  local p
+  for p in "$(command -v sshd 2>/dev/null)" /usr/sbin/sshd /usr/bin/sshd; do
+    [[ -n "${p}" && -x "${p}" ]] && { printf '%s\n' "${p}"; return 0; }
+  done
+  return 1
+}
+
+# The sshd drop-in that refuses logins from outside the local network. sshd
+# enforces it the same way on every distro and macOS, firewall or not.
+ssh_local_only_conf() {
+  cat <<'EOF'
+# Written by install/setup.sh: "Restrict SSH to local network only".
+# Refuses logins from every address outside loopback, the private IPv4
+# ranges (RFC 1918), link-local and IPv6 unique-local addresses.
+# Delete this file and reload sshd to lift the restriction.
+Match Address *,!127.0.0.0/8,!10.0.0.0/8,!172.16.0.0/12,!192.168.0.0/16,!169.254.0.0/16,!::1,!fe80::/10,!fc00::/7
+    DenyUsers *
+Match all
+EOF
+}
+
+# sshd reads sshd_config.d only through an Include line. Recent distros and
+# macOS ship one; else add it as the first line (before any Match block).
+ensure_sshd_include() {
+  local cfg="${SSH_CONFIG_DIR}/sshd_config" tmp
+  root_quiet grep -qE "^[[:space:]]*Include[[:space:]]+${SSH_CONFIG_DIR}/sshd_config\.d/" "${cfg}" 2>/dev/null && return 0
+  info "Adding an Include of sshd_config.d to ${cfg}"
+  if ((DRY_RUN)); then
+    printf '   [dry-run] prepend "Include %s/sshd_config.d/*.conf" to %s\n' "${SSH_CONFIG_DIR}" "${cfg}"
+    return 0
+  fi
+  tmp="$(mktemp)"
+  { printf 'Include %s/sshd_config.d/*.conf\n\n' "${SSH_CONFIG_DIR}"; root_quiet cat "${cfg}"; } >"${tmp}" ||
+    { rm -f "${tmp}"; warn "cannot read ${cfg}"; return 1; }
+  as_root cp -p "${cfg}" "${cfg}.bak.$(date +%Y%m%d_%H%M%S)"
+  # cp onto the existing file keeps its owner and mode (0600 on Fedora/RHEL).
+  as_root cp "${tmp}" "${cfg}"
+  rm -f "${tmp}"
+}
+
+# sshd -t refuses to run without host keys, which containers and fresh
+# Arch/Fedora installs only get when sshd first starts. Generate them.
+ensure_ssh_host_keys() {
+  compgen -G "${SSH_CONFIG_DIR}/ssh_host_*_key" >/dev/null || as_root ssh-keygen -A
+  # Debian/Ubuntu sshd refuses to run (also -t) without its privilege
+  # separation dir, which systemd creates only while sshd runs; socket-activated
+  # Ubuntu 24.04 often has none. ssh.service makes it the same way.
+  if [[ "${1:-}" == "debian" && ! -d "${SSHD_RUN_DIR}" ]]; then as_root mkdir -p -m 755 "${SSHD_RUN_DIR}"; fi
+  return 0
+}
+
+# Make a running sshd read the new config. macOS (launchd) and socket-activated
+# sshd start per connection, so new logins see it anyway.
+reload_sshd() {
+  local family="$1" svc=sshd
+  [[ "${family}" != "macos" ]] || return 0
+  [[ "${family}" == "debian" ]] && svc=ssh
+  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]] || return 0
+  systemctl is-active --quiet "${svc}" || return 0
+  as_root systemctl reload "${svc}" || warn "could not reload ${svc}; restart it to apply the restriction"
+}
+
+# Install the local-network-only drop-in, check it with sshd -t, reload sshd.
+# A config sshd rejects is removed again, so sshd never stays broken.
+restrict_ssh_local_only() {
+  local family="$1" dst="${SSH_CONFIG_DIR}/sshd_config.d/${SSH_LOCAL_CONF_NAME}" sshd tmp
+  if ! sshd="$(sshd_path)" || [[ ! -f "${SSH_CONFIG_DIR}/sshd_config" ]]; then
+    if ((!DRY_RUN)); then
+      warn "no SSH server installed; tick OpenSSH server too"
+      return 0
+    fi
+    sshd=/usr/sbin/sshd
+  fi
+  tmp="$(mktemp)"
+  ssh_local_only_conf >"${tmp}"
+  if [[ -f "${dst}" ]] && files_equal "${tmp}" "${dst}"; then
+    rm -f "${tmp}"
+    ok "${dst} (unchanged)"
+    return 0
+  fi
+  ensure_sshd_include || { rm -f "${tmp}"; return 1; }
+  ensure_ssh_host_keys "${family}"
+  as_root mkdir -p "${SSH_CONFIG_DIR}/sshd_config.d"
+  # No backup next to it: macOS includes every file in sshd_config.d, .bak too.
+  as_root install -m 644 "${tmp}" "${dst}"
+  rm -f "${tmp}"
+  if ((!DRY_RUN)) && ! root_quiet "${sshd}" -t; then
+    warn "sshd rejected the new config; removing ${dst}"
+    as_root rm -f "${dst}"
+    return 1
+  fi
+  reload_sshd "${family}"
+  ok "SSH logins now only from the local network (${dst})"
+}
+
 # htop lives in EPEL on RHEL and its clones.
 enable_epel() {
   local pm="$1"
@@ -703,6 +813,19 @@ install_bin_scripts() {
   done
 }
 
+# bash only: Homebrew's bash-completion@2. Part of the loader; also appended
+# alone to an older loader. Its own script returns early under bash < 4.2.
+# shellcheck disable=SC2016 # literal text, expanded in the user shell
+BREW_COMPLETION_BLOCK='
+# bash only: Homebrew bash-completion@2 (macOS; needs the brew bash 5).
+if [ -n "${BASH_VERSION:-}" ]; then
+    for _bc in "${HOMEBREW_PREFIX:-/opt/homebrew}/etc/profile.d/bash_completion.sh" \
+               /usr/local/etc/profile.d/bash_completion.sh; do
+        [ -r "$_bc" ] && { . "$_bc"; break; }
+    done
+    unset _bc
+fi'
+
 # Block that loads all alias files; added to the bash startup file.
 # shellcheck disable=SC2016 # loader is literal text, expanded in the user shell
 ALIAS_LOADER='# Load custom aliases in Zsh
@@ -719,6 +842,7 @@ fi
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
 fi
+'"${BREW_COMPLETION_BLOCK}"'
 
 # Show where each alias/function comes from before it runs (last, so it
 # sees everything above). Toggle with: show_origin on|off
@@ -755,6 +879,7 @@ install_aliases() {
     # shellcheck disable=SC2016 # literal line, matched literally with grep -F
     grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || missing="${missing} path"
     grep -qsF 'source ~/.bash_show_origin' "${rc}" || missing="${missing} origin"
+    grep -qsF 'profile.d/bash_completion.sh' "${rc}" || missing="${missing} completion"
     if [[ -n "${missing}" ]]; then
       backup_file "${rc}"
       info "Adding${missing} to ${rc}"
@@ -766,6 +891,7 @@ install_aliases() {
         # shellcheck disable=SC2016 # written literally into the rc file
         [[ "${missing}" == *path* ]] && printf '\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${rc}"
         [[ "${missing}" == *origin* ]] && printf '\nif [ -f ~/.bash_show_origin ]; then\n    source ~/.bash_show_origin\nfi\n' >>"${rc}"
+        [[ "${missing}" == *completion* ]] && printf '%s\n' "${BREW_COMPLETION_BLOCK}" >>"${rc}"
       fi
       ok "${rc}"
       return 0
@@ -821,24 +947,56 @@ setup_ssh_key() {
     return 0
   fi
   info "No SSH key found in ${TARGET_HOME}/.ssh"
+  command -v ssh-keygen >/dev/null 2>&1 || ((DRY_RUN)) ||
+    { warn "ssh-keygen not found; install the OpenSSH client first"; return 0; }
+  key="${TARGET_HOME}/.ssh/id_ed25519"
+  # A private key whose .pub is lost: ssh-keygen -f would offer to overwrite
+  # the key. Never do that; rebuild the .pub from it instead.
+  if [[ -f "${key}" ]]; then
+    rebuild_ssh_pub "${key}"
+    return
+  fi
   if [[ "${SSH_KEY_MODE}" != "create" && ! -t 0 ]]; then
     warn "skipped SSH key: no terminal for a passphrase; rerun with --ssh-key to create one"
     return 0
   fi
-  command -v ssh-keygen >/dev/null 2>&1 || ((DRY_RUN)) ||
-    { warn "ssh-keygen not found; install the OpenSSH client first"; return 0; }
 
-  key="${TARGET_HOME}/.ssh/id_ed25519"
   local -a args=(-t ed25519 -f "${key}" -C "$(current_user)@$(hostname 2>/dev/null || uname -n)")
   # Without a terminal ssh-keygen cannot ask for a passphrase.
   [[ -t 0 ]] || args+=(-N "")
   run mkdir -p "${TARGET_HOME}/.ssh"
   run chmod 700 "${TARGET_HOME}/.ssh"
+  # A .pub with no private half may belong to a key kept elsewhere: keep a copy.
+  backup_file "${key}.pub"
   run ssh-keygen "${args[@]}"
   if ((!DRY_RUN)); then
     ok "Created ${key}. Public key (add it to GitHub/servers):"
     cat "${key}.pub"
   fi
+}
+
+# Write <key>.pub from the private key. An encrypted key asks for its
+# passphrase; without a terminal that fails, which only warns.
+rebuild_ssh_pub() {
+  local key="$1" pub
+  info "Rebuilding ${key}.pub from the existing private key"
+  if ((DRY_RUN)); then
+    printf '   [dry-run] ssh-keygen -y -f %s > %s.pub\n' "${key}" "${key}"
+    return 0
+  fi
+  printf '   %s$ ssh-keygen -y -f %s > %s.pub%s\n' "${C_DIM}" "${key}" "${key}" "${C_RESET}"
+  if ! pub="$(ssh-keygen -y -f "${key}")" || [[ -z "${pub}" ]]; then
+    warn "could not read ${key} (passphrase?); run: ssh-keygen -y -f ${key} > ${key}.pub"
+    [[ -t 0 ]] || return 0
+    return 1
+  fi
+  local tmp="${key}.pub.tmp.$$"
+  if ! { printf '%s\n' "${pub}" >"${tmp}" && chmod 644 "${tmp}" && mv -f "${tmp}" "${key}.pub"; }; then
+    rm -f "${tmp}"
+    die "could not write ${key}.pub"
+  fi
+  ok "Rebuilt ${key}.pub. Public key (add it to GitHub/servers):"
+  cat "${key}.pub"
 }
 
 # Print the user name. Containers can run under a UID with no passwd entry.
@@ -886,6 +1044,136 @@ setup_zsh_default() {
   ((DRY_RUN)) || ok "login shell set to zsh; log out and back in to use it"
 }
 
+# Print the target ($TARGET_HOME relative) of a CONFIG_MAP item.
+config_target() {
+  local entry
+  for entry in "${CONFIG_MAP[@]}"; do
+    [[ "${entry%%:*}" == "$1" ]] && { printf '%s\n' "${entry##*:}"; return 0; }
+  done
+  return 1
+}
+
+# True when a terminal app is installed: a brew cask on macOS, else a command.
+terminal_installed() {
+  local family="$1" name="$2"
+  if [[ "${family}" == "macos" ]]; then
+    command -v brew >/dev/null 2>&1 && brew list --cask "${name}" >/dev/null 2>&1
+  else
+    command -v "${name}" >/dev/null 2>&1
+  fi
+}
+
+# Print the state of sshd: OK, MISSING, or SKIPPED <reason>.
+check_ssh_server() {
+  local family="$1" svc=sshd
+  if [[ "${family}" == "macos" ]]; then
+    # launchd owns port 22 while Remote Login is on; netstat needs no root.
+    if netstat -an -p tcp 2>/dev/null | grep -qE '[.:]22 .*LISTEN'; then echo OK; else echo MISSING; fi
+    return 0
+  fi
+  sshd_path >/dev/null || { echo MISSING; return 0; }
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    echo "SKIPPED systemd not running"
+    return 0
+  fi
+  [[ "${family}" == "debian" ]] && svc=ssh
+  # Ubuntu 22.10+ starts sshd per connection from ssh.socket.
+  if systemctl is-active --quiet "${svc}" || systemctl is-active --quiet "${svc}.socket"; then echo OK; else echo MISSING; fi
+}
+
+# Print OK, MISSING or SKIPPED <reason> for catalog item i. Read-only, and
+# always returns 0 so it is safe inside $(...) under set -e.
+check_item() {
+  local family="$1" i="$2" key target pkg h="${TARGET_HOME}" f rc
+  key="${CAT_GROUP[i]}.${CAT_ITEM[i]}"
+  if [[ "${CAT_ACTION[i]}" == "pkg" ]]; then
+    pkg="$(pkg_name "${family}" "${CAT_ITEM[i]}")"
+    if [[ -z "${pkg}" ]]; then echo "SKIPPED part of the base system"
+    elif pkg_installed "${family}" "${pkg}" || skip_installed_variant "${pkg}"; then echo OK
+    else echo MISSING; fi
+    return 0
+  fi
+  case "${key}" in
+    configs.aliases)
+      rc="${h}/.bash_profile"
+      [[ -f "${rc}" ]] || rc="${h}/.bashrc"
+      if [[ -f "${h}/.bash_extras" && -f "${h}/.bash_show_origin" ]] &&
+        [[ -f "${h}/.bash_aliases" || -f "${h}/.bash_aliases2" ]] &&
+        grep -qsF 'source ~/.bash_extras' "${rc}"; then echo OK; else echo MISSING; fi
+      ;;
+    configs.bin)
+      for f in "${SCRIPT_DIR}"/configs/bin/*; do
+        [[ ! -f "${f}" || -x "${h}/.local/bin/$(basename "${f}")" ]] || { echo MISSING; return 0; }
+      done
+      echo OK
+      ;;
+    configs.*)
+      if target="$(config_target "${CAT_ITEM[i]}")" && [[ -f "${h}/${target}" ]]; then echo OK; else echo MISSING; fi
+      ;;
+    tmux-plugins.tpm)
+      if [[ -f "${h}/.tmux/plugins/tpm/tpm" ]]; then echo OK; else echo MISSING; fi
+      ;;
+    terminals.kitty | terminals.ghostty)
+      if [[ "${CAT_ITEM[i]}" == "kitty" ]]; then
+        f="${h}/.config/kitty/kitty.conf"
+      elif [[ "${family}" == "macos" ]]; then
+        f="${h}/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+      else
+        f="${h}/.config/ghostty/config"
+      fi
+      if [[ -f "${f}" ]] && terminal_installed "${family}" "${CAT_ITEM[i]}"; then echo OK
+      elif [[ -f "${f}" && "${CAT_ITEM[i]}" == "ghostty" && "${family}" != "arch" && "${family}" != "macos" ]]; then
+        echo "SKIPPED no ${family} package; install from https://ghostty.org/download"
+      else echo MISSING; fi
+      ;;
+    terminals.wezterm-wsl)
+      if ! f="$(windows_home 2>/dev/null)"; then echo "SKIPPED cannot find the Windows home"
+      elif [[ -f "${f}/.wezterm.lua" ]]; then echo OK
+      else echo MISSING; fi
+      ;;
+    extras.ssh-server) check_ssh_server "${family}" ;;
+    extras.ssh-local-only)
+      f="${SSH_CONFIG_DIR}/sshd_config.d/${SSH_LOCAL_CONF_NAME}"
+      if [[ -f "${f}" && "$(<"${f}")" == "$(ssh_local_only_conf)" ]]; then echo OK
+      elif ! sshd_path >/dev/null; then echo "SKIPPED no SSH server installed"
+      else echo MISSING; fi
+      ;;
+    extras.ssh-key)
+      if find_ssh_key >/dev/null; then echo OK
+      elif [[ "${SSH_KEY_MODE}" != "create" && ! -t 0 ]]; then echo "SKIPPED no terminal for a passphrase"
+      else echo MISSING; fi
+      ;;
+    extras.zsh-login)
+      f="$(login_shell 2>/dev/null || true)"
+      if [[ "${f##*/}" == "zsh" ]]; then echo OK; else echo MISSING; fi
+      ;;
+    *) echo OK ;;
+  esac
+  return 0
+}
+
+# Check step: one OK / MISSING / SKIPPED line per ticked item. Fails when
+# anything is missing, so the run exits 1 and a rerun retries.
+check_selection() {
+  local family="$1" i result status note color missing=0
+  if [[ "${family}" == "macos" ]] && command -v brew >/dev/null 2>&1; then
+    BREW_INSTALLED="$(brew list --formula -1 2>/dev/null | xargs)"
+  fi
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_SEL[i]}" == "1" ]] || continue
+    result="$(check_item "${family}" "${i}")"
+    status="${result%% *}" note=""
+    [[ "${result}" != *" "* ]] || note="${result#* }"
+    case "${status}" in
+      OK) color="${C_GREEN}" ;;
+      SKIPPED) color="${C_YELLOW}" ;;
+      *) color="${C_RED}" missing=$((missing + 1)) ;;
+    esac
+    printf '  %s%-7s%s %s%s\n' "${color}" "${status}" "${C_RESET}" "${CAT_LABEL[i]}" "${note:+ (${note})}"
+  done
+  ((missing == 0)) || { warn "${missing} item(s) missing; rerun to retry"; return 1; }
+}
+
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || return 0
@@ -909,6 +1197,7 @@ parse_args() {
       --no-packages) DO_PACKAGES=0 FLAGS_USED=1 ;;
       --no-configs) DO_CONFIGS=0 FLAGS_USED=1 ;;
       --ssh-server) DO_SSH_SERVER=1 FLAGS_USED=1 ;;
+      --ssh-local-only) DO_SSH_LOCAL=1 FLAGS_USED=1 ;;
       --ssh-key) SSH_KEY_MODE=create FLAGS_USED=1 ;;
       --no-ssh-key) SSH_KEY_MODE=skip FLAGS_USED=1 ;;
       --zsh-default) ZSH_DEFAULT_MODE=change FLAGS_USED=1 ;;
@@ -942,12 +1231,15 @@ run_steps() {
     run_step packages install_packages "${family}"
   fi
   if item_selected extras.ssh-server; then run_step "ssh server" enable_ssh_server "${family}"; fi
+  if action_selected step:ssh-local-only; then run_step "ssh local network only" restrict_ssh_local_only "${family}"; fi
   if action_selected step:configs; then run_step configs install_configs "${family}"; fi
   if action_selected step:tpm; then run_step "tmux plugins" install_tpm; fi
   if action_selected step:terminals; then run_step terminals setup_terminals "${family}"; fi
   if action_selected step:wezterm-wsl; then run_step "WezTerm on Windows" install_windows_terminal; fi
   if action_selected step:ssh-key; then run_step "SSH key" setup_ssh_key; fi
   if action_selected step:zsh-login; then run_step "zsh login shell" setup_zsh_default; fi
+  # Last: test that every ticked item is really there. A dry run changed nothing.
+  if ((!DRY_RUN)); then run_step check check_selection "${family}"; fi
 }
 
 # Print where this copy of the repo came from: git commit, or the .source file
@@ -964,6 +1256,7 @@ source_version() {
 needs_root() {
   local family="$1"
   item_selected extras.ssh-server && return 0
+  item_selected extras.ssh-local-only && return 0
   [[ "${family}" != "macos" ]] || return 1
   action_selected pkg || action_selected step:terminals || action_selected step:zsh-login
 }

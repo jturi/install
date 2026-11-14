@@ -63,7 +63,7 @@ check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
-check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(load_catalog macos; config_load "${WORK}/none"; selected_packages macos | xargs)"
+check macos-package-list "tmux vim nano bash bash-completion@2 fzf htop git wget rsync tree jq" "$(load_catalog macos; config_load "${WORK}/none"; selected_packages macos | xargs)"
 
 # Catalog parsing and platform filtering.
 FIXTURE="${ROOT}/tests/fixtures/catalog.txt"
@@ -392,6 +392,8 @@ run_main() {
     install_windows_terminal() { echo wezterm-wsl >>"${m_log}"; }
     setup_ssh_key() { echo ssh-key >>"${m_log}"; }
     setup_zsh_default() { echo zsh-login >>"${m_log}"; }
+    restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; }
+    check_selection() { :; }
     [[ -z "${M_EXTRA:-}" ]] || eval "${M_EXTRA}"
     main "$@"
   ) </dev/null 2>&1
@@ -421,6 +423,16 @@ m_reset; run_main --no-configs --yes >/dev/null
 check main-no-configs "packages" "$(steps)"
 m_reset; run_main --ssh-server --yes >/dev/null
 check main-ssh-server "packages ssh-server configs tpm" "$(steps)"
+m_reset; run_main --ssh-server --ssh-local-only --yes >/dev/null
+check main-ssh-local-only "packages ssh-server ssh-local-only configs tpm" "$(steps)"
+# The check step runs last on a real run, never on a dry run.
+m_reset; M_EXTRA='check_selection() { echo check >>"${m_log}"; }'; run_main --yes >/dev/null
+check main-check-last "${DEFAULT_STEPS} check" "$(steps)"
+m_reset; M_EXTRA='check_selection() { echo check >>"${m_log}"; }'; run_main --dry-run >/dev/null
+check main-check-not-in-dry-run "${DEFAULT_STEPS}" "$(steps)"
+m_reset; M_EXTRA='check_selection() { return 1; }'; out="$(run_main --yes)"; rc=$?
+check main-check-missing-fails "1" "${rc}"
+check main-check-missing-summary "1" "$(printf '%s\n' "${out}" | grep -c 'FAILED.*check')"
 # Modes.
 m_reset; M_EXTRA="${MENU_ON}"; run_main >/dev/null
 check main-menu-runs "menu ${DEFAULT_STEPS}" "$(steps)"
@@ -492,7 +504,92 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   check key-created "yes" "$([[ -f "${home2}/.ssh/id_ed25519" && -f "${home2}/.ssh/id_ed25519.pub" ]] && echo yes)"
   check ssh-dir-mode "700" "$(stat -c %a "${home2}/.ssh" 2>/dev/null || stat -f %Lp "${home2}/.ssh")"
   check ask-noninteractive-skips "" "$(TARGET_HOME="${WORK}/home3" SSH_KEY_MODE=saved setup_ssh_key </dev/null &>/dev/null; ls "${WORK}/home3/.ssh" 2>/dev/null)"
+
+  # A private key whose .pub is lost is never overwritten: the .pub is rebuilt.
+  home4="${WORK}/home4"
+  mkdir -p "${home4}/.ssh"
+  ssh-keygen -q -t ed25519 -N "" -f "${home4}/.ssh/id_ed25519" -C t >/dev/null
+  cp "${home4}/.ssh/id_ed25519" "${WORK}/priv.orig"
+  want_pub="$(cut -d' ' -f1,2 "${home4}/.ssh/id_ed25519.pub")"
+  rm "${home4}/.ssh/id_ed25519.pub"
+  for mode in create saved; do
+    rm -f "${home4}/.ssh/id_ed25519.pub"
+    TARGET_HOME="${home4}" SSH_KEY_MODE="${mode}" setup_ssh_key </dev/null >/dev/null 2>&1; rc=$?
+    check "pub-rebuilt-${mode}-rc" "0" "${rc}"
+    check "pub-rebuilt-${mode}" "${want_pub}" "$(cut -d' ' -f1,2 "${home4}/.ssh/id_ed25519.pub" 2>/dev/null)"
+    check "private-kept-${mode}" "same" "$(cmp -s "${WORK}/priv.orig" "${home4}/.ssh/id_ed25519" && echo same)"
+  done
+  # An encrypted key without a terminal: warn, keep the key, do not fail.
+  home5="${WORK}/home5"
+  mkdir -p "${home5}/.ssh"
+  ssh-keygen -q -t ed25519 -N secret -f "${home5}/.ssh/id_ed25519" -C t >/dev/null
+  rm "${home5}/.ssh/id_ed25519.pub"
+  cp "${home5}/.ssh/id_ed25519" "${WORK}/priv5.orig"
+  out="$(TARGET_HOME="${home5}" SSH_KEY_MODE=create setup_ssh_key </dev/null 2>&1 | grep -c 'could not read')"
+  check encrypted-no-tty-warns "1" "${out}"
+  check encrypted-key-kept "same" "$(cmp -s "${WORK}/priv5.orig" "${home5}/.ssh/id_ed25519" && echo same)"
+  # A lone .pub (no private half) is backed up before a new key replaces it.
+  home6="${WORK}/home6"
+  mkdir -p "${home6}/.ssh"
+  echo "ssh-ed25519 AAAA other" >"${home6}/.ssh/id_ed25519.pub"
+  TARGET_HOME="${home6}" SSH_KEY_MODE=create setup_ssh_key </dev/null >/dev/null 2>&1
+  check lone-pub-backed-up "1" "$(grep -l 'AAAA other' "${home6}/.ssh/"id_ed25519.pub.bak.* 2>/dev/null | wc -l | tr -d ' ')"
+  check lone-pub-new-key "yes" "$([[ -f "${home6}/.ssh/id_ed25519" ]] && echo yes)"
 fi
+
+# Restrict SSH to local network only: drop-in, Include line, sshd -t, rerun.
+sshdir="${WORK}/etc-ssh"
+mkdir -p "${sshdir}"
+printf 'Port 22\n' >"${sshdir}/sshd_config"
+touch "${sshdir}/ssh_host_ed25519_key"
+ssh_stubs='as_root() { run "$@"; }; root_quiet() { "$@"; }; reload_sshd() { echo reloaded; }; SSHD_RUN_DIR="${WORK}/run-sshd"'
+local_only() { (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; restrict_ssh_local_only debian) 2>&1; }
+out="$(local_only)"; rc=$?
+dropin="${sshdir}/sshd_config.d/20-local-network-only.conf"
+check local-only-rc "0" "${rc}"
+check local-only-dropin "same" "$([[ "$(<"${dropin}")" == "$(ssh_local_only_conf)" ]] && echo same)"
+check local-only-denyusers "1" "$(grep -c '^    DenyUsers \*$' "${dropin}")"
+check local-only-include-first "Include ${sshdir}/sshd_config.d/*.conf" "$(head -n 1 "${sshdir}/sshd_config")"
+check local-only-config-kept "1" "$(grep -c '^Port 22$' "${sshdir}/sshd_config")"
+check local-only-config-backup "1" "$(find "${sshdir}" -maxdepth 1 -name 'sshd_config.bak.*' | wc -l | tr -d ' ')"
+check local-only-reloaded "1" "$(grep -c reloaded <<<"${out}")"
+check local-only-run-dir "yes" "$([[ -d "${WORK}/run-sshd" ]] && echo yes)"
+out="$(local_only)"
+check local-only-rerun-unchanged "1" "$(grep -c '(unchanged)' <<<"${out}")"
+check local-only-rerun-one-include "1" "$(grep -c '^Include' "${sshdir}/sshd_config")"
+check local-only-rerun-no-reload "0" "$(grep -c reloaded <<<"${out}")"
+# sshd rejects the config: the drop-in is removed and the step fails.
+rm -f "${dropin}"
+out="$( (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/false; }; restrict_ssh_local_only debian) 2>&1)"; rc=$?
+check local-only-rejected-rc "1" "${rc}"
+check local-only-rejected-removed "no" "$([[ -e "${dropin}" ]] && echo yes || echo no)"
+# No SSH server installed: only warns.
+out="$( (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${WORK}/no-ssh"; restrict_ssh_local_only debian) 2>&1)"; rc=$?
+check local-only-no-server-rc "0" "${rc}"
+check local-only-no-server-warns "1" "$(grep -c 'no SSH server installed' <<<"${out}")"
+
+# Check step: one line per ticked item; MISSING fails, SKIPPED does not.
+ck_home="${WORK}/ck_home"
+mkdir -p "${ck_home}"
+only_ticked() { local i; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do CAT_SEL[i]=0; done; for k in "$@"; do set_selection "${k}" 1; done; }
+ck() { (load_catalog debian; only_ticked "$@"; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; check_selection debian </dev/null; echo "rc=$?") 2>&1; }
+out="$(ck tmux-plugins.tpm configs.tmux)"
+check check-missing-rc "rc=1" "$(grep -o 'rc=[0-9]' <<<"${out}")"
+check check-missing-lines "2" "$(grep -c '^  MISSING' <<<"${out}")"
+mkdir -p "${ck_home}/.tmux/plugins/tpm"; touch "${ck_home}/.tmux/plugins/tpm/tpm" "${ck_home}/.tmux.conf"
+out="$(ck tmux-plugins.tpm configs.tmux)"
+check check-ok-rc "rc=0" "$(grep -o 'rc=[0-9]' <<<"${out}")"
+check check-ok-line "1" "$(grep -c '^  OK      TPM and plugins$' <<<"${out}")"
+out="$(ck extras.ssh-key)"
+check check-ssh-key-skipped "1" "$(grep -c '^  SKIPPED SSH key (no terminal for a passphrase)$' <<<"${out}")"
+check check-ssh-key-skipped-rc "rc=0" "$(grep -o 'rc=[0-9]' <<<"${out}")"
+out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; check_selection debian; echo "rc=$?") 2>&1)"
+check check-local-only-missing "1" "$(grep -c '^  MISSING Restrict SSH' <<<"${out}")"
+(eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; restrict_ssh_local_only debian) >/dev/null 2>&1
+out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; check_selection debian; echo "rc=$?") 2>&1)"
+check check-local-only-ok "1" "$(grep -c '^  OK      Restrict SSH' <<<"${out}")"
+out="$( (load_catalog debian; only_ticked shell.tmux; pkg_installed() { [[ "$2" == tmux ]]; }; check_selection debian; echo "rc=$?") 2>&1)"
+check check-pkg-ok "1" "$(grep -c '^  OK      tmux$' <<<"${out}")"
 
 # Containers can run under a UID with no passwd entry: `id -un` then fails.
 # shellcheck disable=SC2329 # the stub is called through login_shell

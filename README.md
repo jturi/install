@@ -71,7 +71,7 @@ cd ~/repos/install
 ```
 
 Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--no-packages`, `--no-configs`,
-`--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-key`, `--no-ssh-key`,
+`--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-local-only`, `--ssh-key`, `--no-ssh-key`,
 `--zsh-default`, `--no-zsh-default`, `--debug`, `--no-log`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
@@ -88,6 +88,13 @@ Run it as often as you like; a second run changes nothing.
 - **Verbose.** Each step prints a header, and each command that changes the
   machine is printed (`$ cmd`) before it runs. `--dry-run` prints the same
   commands without running them. `--debug` traces every shell line (`set -x`).
+- **Checked.** After a real run (not `--dry-run`) a last `check` step tests
+  every ticked item and prints `OK`, `MISSING` or `SKIPPED <reason>`: packages
+  through `pkg_installed`, configs and TPM by their files, terminals by app and
+  config, sshd running, the SSH restriction in place, an SSH key pair, zsh as
+  login shell. `MISSING` fails the step, so the run exits 1 and a rerun retries.
+  `SKIPPED` is not an error (no systemd in a container, no terminal for an SSH
+  key passphrase, Ghostty with no distro package).
   The summary shows each step with its time and `OK`, `WARN` (with the warning
   text) or `FAILED`.
 - **Logged.** Every real run is copied to
@@ -226,8 +233,14 @@ package manager:
   With `--yes` it sets `NONINTERACTIVE=1`.
 - After the install it adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`.
 - macOS already has less, curl, ssh, lsof, file, tar, zip and the other base
-  tools, so brew installs only: tmux, vim, nano, bash-completion@2, htop, git,
-  wget, rsync, tree, jq.
+  tools, so brew installs only: tmux, vim, nano, bash (5.x), bash-completion@2,
+  fzf, htop, git, wget, rsync, tree, jq.
+- `bash-completion@2` needs bash 4.2 or newer, so the `bash 5 (Homebrew)` item
+  is on by default. The alias loader sources
+  `$HOMEBREW_PREFIX/etc/profile.d/bash_completion.sh` in bash only (zsh
+  skips it, and the script itself does nothing under the system bash 3.2). To
+  use bash 5 as your shell, start `bash` from zsh or set your terminal's
+  command to `$(brew --prefix)/bin/bash`.
 - `~/.nanorc` points at Homebrew's nano syntax files (`<prefix>/share/nano`).
 - `--ssh-server` turns on Remote Login (`systemsetup -setremotelogin on`).
   Newer macOS can block this without Full Disk Access; then use
@@ -237,7 +250,8 @@ package manager:
 ## What it installs
 
 - Packages: `pkg` lines in `catalog.txt`, grouped:
-  - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, man-db
+  - shell/editors/terminal: zsh, tmux, vim, nano, less, bash-completion, fzf, man-db
+    (macOS also: bash 5 from Homebrew)
   - system: sudo, htop, procps, lsof, which, file, diffutils, make
   - network: git, OpenSSH client, curl, wget, rsync, iproute2, ping, dig, ca-certificates
   - files: tree, tar, gzip, zip, unzip, jq
@@ -247,12 +261,27 @@ package manager:
   Fedora/RHEL; `dnsutils` → `bind` / `bind-utils`).
 - `--ssh-server`: also installs the OpenSSH server and runs
   `systemctl enable --now sshd` (`ssh` on Debian/Ubuntu). Off by default.
+- `Restrict SSH to local network only` (under `extras`, off by default;
+  `--ssh-local-only` for one run): writes
+  `/etc/ssh/sshd_config.d/20-local-network-only.conf`, a `Match Address` block
+  that refuses logins (`DenyUsers *`) from every address outside loopback,
+  `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local and IPv6
+  unique-local addresses. sshd enforces it itself, so it works the same on every
+  distro and macOS, with or without a firewall. Tailscale and other VPN ranges
+  (`100.64.0.0/10`) count as outside. The step adds an
+  `Include /etc/ssh/sshd_config.d/*.conf` line to the top of `sshd_config` when
+  it lacks one (backup first), generates missing host keys (`ssh-keygen -A`),
+  checks the result with `sshd -t` (a rejected file is removed again) and
+  reloads a running sshd. To lift the restriction, delete that file and reload
+  sshd (macOS: nothing to reload).
 - Configs (`configs/` → `$HOME`):
   - `tmux.conf` → `~/.tmux.conf` (copy of `dotfiles/dot_tmux.conf`, prefix `Ctrl+a`)
   - `nanorc` → `~/.nanorc`
   - `zshrc` → `~/.zshrc` (copy of `dotfiles/dot_zshrc`; the `~/.bash_*` alias
     files and OpenCode lines it references are skipped when absent), plus a
-    block at the end that loads `~/.bash_aliases` and `~/.bash_aliases2`
+    block at the end that loads `~/.bash_aliases` and `~/.bash_aliases2`.
+    fzf key bindings (Ctrl+R, Ctrl+T, Alt+C) load from `fzf --zsh` (fzf 0.48+,
+    Homebrew, Arch), else from the distro's scripts (Debian/Ubuntu, Fedora/RHEL)
   - `bash_aliases` → `~/.bash_aliases`, or `~/.bash_aliases2` (see below)
   - `bash_show_origin` → `~/.bash_show_origin`: before each command, prints
     where its aliases and functions are defined (`ll → ls -la  ~/.bash_aliases:12`).
@@ -303,7 +332,7 @@ only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 - The loader block below is appended to `~/.bash_profile` if that file
   exists, else to `~/.bashrc` (backed up first). It is not added twice;
   an older loader gains just the missing blocks (`~/.bash_extras`,
-  `~/.bash_show_origin`) on rerun.
+  `~/.bash_show_origin`, Homebrew bash completion) on rerun.
 
 ```sh
 # Load custom aliases in Zsh
@@ -317,6 +346,15 @@ fi
 
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
+fi
+
+# bash only: Homebrew bash-completion@2 (macOS; needs the brew bash 5).
+if [ -n "${BASH_VERSION:-}" ]; then
+    for _bc in "${HOMEBREW_PREFIX:-/opt/homebrew}/etc/profile.d/bash_completion.sh" \
+               /usr/local/etc/profile.d/bash_completion.sh; do
+        [ -r "$_bc" ] && { . "$_bc"; break; }
+    done
+    unset _bc
 fi
 
 # Show where each alias/function comes from before it runs (last, so it
@@ -342,6 +380,10 @@ Tick `SSH key` under `extras`. If `~/.ssh` has no key pair (any `*.pub` with its
 private key, so custom names like `id_github` count), `setup.sh` runs
 `ssh-keygen`, which asks for a passphrase, and prints the public key.
 
+- A private key whose `.pub` is lost (`~/.ssh/id_ed25519` alone) is never
+  overwritten: the `.pub` is rebuilt with `ssh-keygen -y`. An encrypted key asks
+  for its passphrase; with no terminal the step only warns. A lone `.pub` with no
+  private half is backed up before a new key replaces it.
 - `--ssh-key`: create the key for this run (empty passphrase when there is no
   terminal).
 - `--no-ssh-key`: skip the check.
