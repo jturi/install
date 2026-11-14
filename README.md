@@ -303,7 +303,7 @@ package manager:
 
 Before a file changes, `setup.sh` copies it to `<file>.bak.$(date +%Y%m%d_%H%M%S)`,
 for example `~/.zshrc.bak.20261018_191502`. This covers every config in
-`configs/`, the alias loader in `~/.bash_profile`/`~/.bashrc`, and the
+`configs/`, the alias loader in `~/.bashrc` (macOS: `~/.bash_profile`), and the
 `~/.zprofile` line on macOS. A file that is already
 identical to the repo version is left alone, so reruns make no new backups.
 
@@ -329,10 +329,15 @@ only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 - Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
   into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
   The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.
-- The loader block below is appended to `~/.bash_profile` if that file
-  exists, else to `~/.bashrc` (backed up first). It is not added twice;
-  an older loader gains just the missing blocks (`~/.bash_extras`,
-  `~/.bash_show_origin`, Homebrew bash completion) on rerun.
+- The loader block below is appended to `~/.bashrc` (backed up first). Linux
+  terminals start non-login shells, which read only `~/.bashrc`; login shells
+  reach it through the `~/.bash_profile` or `~/.profile` the distro ships. On
+  macOS, whose terminals start login shells, it goes to `~/.bash_profile` when
+  that file exists. It is not added twice; an older loader gains just the
+  missing blocks (`~/.bash_extras`, `~/.bash_show_origin`, Homebrew bash
+  completion) on rerun. Earlier versions put the loader in `~/.bash_profile` on
+  Linux too: setup then adds one to `~/.bashrc`, leaves the old block in place
+  and says it can be removed.
 
 ```sh
 # Load custom aliases in Zsh

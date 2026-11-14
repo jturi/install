@@ -28,9 +28,9 @@ for image in "${IMAGES[@]}"; do
       cmp /src/configs/zshrc ~/.zshrc
       zsh -i -c exit </dev/null
       cmp /src/configs/bash_aliases ~/.bash_aliases
-      rc=~/.bashrc; [ -f ~/.bash_profile ] && rc=~/.bash_profile
-      grep -q "source ~/.bash_aliases2" "$rc"
-      bash -ic "alias ll" </dev/null >/dev/null 2>&1 || bash -lc "shopt -s expand_aliases; source $rc; alias ll" >/dev/null
+      # Linux: the loader lives in ~/.bashrc, so a non-login terminal has the aliases.
+      grep -q "source ~/.bash_aliases2" ~/.bashrc
+      bash -ic "alias ll" </dev/null >/dev/null 2>&1 || { echo "non-login bash lacks the aliases"; exit 1; }
       zsh -ic "alias ll" </dev/null >/dev/null
       test -f ~/.ssh/id_ed25519.pub
       for bin in zsh tmux vim nano htop git curl ssh sshd dig ip ping less sudo which file lsof zip fzf; do command -v "$bin" >/dev/null || { echo "missing $bin"; exit 1; }; done
