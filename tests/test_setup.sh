@@ -144,12 +144,13 @@ check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | 
 check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
 
 # Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
-# an existing ~/.bash_profile gets the loader (backed up), ~/.bashrc is untouched.
+# on macOS (login shells) an existing ~/.bash_profile gets the loader (backed
+# up), ~/.bashrc is untouched.
 ah2="${WORK}/alias_home2"
 mkdir -p "${ah2}"
 echo "alias mine='echo mine'" >"${ah2}/.bash_aliases"
 echo "# profile" >"${ah2}/.bash_profile"
-TARGET_HOME="${ah2}" install_aliases >/dev/null
+TARGET_HOME="${ah2}" install_aliases macos >/dev/null
 check own-aliases-kept "alias mine='echo mine'" "$(cat "${ah2}/.bash_aliases")"
 check aliases2-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah2}/.bash_aliases2" && echo same)"
 check loader-in-profile "1" "$(grep -c 'source ~/.bash_aliases2' "${ah2}/.bash_profile")"
@@ -161,6 +162,31 @@ check zshrc-loads-aliases "1" "$(grep -c 'source ~/.bash_aliases2' "${ROOT}/conf
 check zshrc-loads-extras "1" "$(grep -c 'source ~/.bash_extras' "${ROOT}/configs/zshrc")"
 check zshrc-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ROOT}/configs/zshrc")"
 check profile-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ah2}/.bash_profile")"
+
+# Linux with the Arch/Fedora skeleton (.bash_profile sources .bashrc): the
+# loader goes to ~/.bashrc, which non-login terminals read; .bash_profile is
+# left alone.
+ah4="${WORK}/alias_home4"
+mkdir -p "${ah4}"
+printf '[[ -f ~/.bashrc ]] && . ~/.bashrc\n' >"${ah4}/.bash_profile"
+printf '# rc\n' >"${ah4}/.bashrc"
+cp "${ah4}/.bash_profile" "${WORK}/profile4.orig"
+TARGET_HOME="${ah4}" install_aliases arch >/dev/null
+check linux-loader-in-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah4}/.bashrc")"
+check linux-profile-untouched "same" "$(cmp -s "${WORK}/profile4.orig" "${ah4}/.bash_profile" && echo same)"
+check linux-nonlogin-loads "function" "$(HOME="${ah4}" bash -i -c 'type -t mkcd' </dev/null 2>/dev/null)"
+check linux-check-agrees "OK" "$(TARGET_HOME="${ah4}"; load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != configs.aliases ]] || check_item arch "${i}"; done)"
+# Upgrade on Linux: an old loader in .bash_profile stays (never deleted),
+# .bashrc gets one, and a note says the old one can go.
+ah5="${WORK}/alias_home5"
+mkdir -p "${ah5}"
+printf 'if [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >"${ah5}/.bash_profile"
+out="$(TARGET_HOME="${ah5}" install_aliases fedora 2>&1)"
+check linux-upgrade-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah5}/.bashrc")"
+check linux-upgrade-profile-kept "1" "$(grep -c 'source ~/.bash_extras' "${ah5}/.bash_profile")"
+check linux-upgrade-note "1" "$(grep -c 'can be removed' <<<"${out}")"
+out="$(TARGET_HOME="${ah5}" install_aliases fedora 2>&1)"
+check linux-upgrade-note-once "0" "$(grep -c 'can be removed' <<<"${out}")"
 
 # Upgrade: an old loader (aliases + aliases2, no extras) gains extras idempotently.
 ah3="${WORK}/alias_home3"

@@ -862,7 +862,7 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
-  if item_selected configs.aliases; then install_aliases; fi
+  if item_selected configs.aliases; then install_aliases "${family}"; fi
   # Scripts only (no PATH appends here): the loader block and repo .zshrc
   # already export ~/.local/bin, so reruns stay idempotent.
   if item_selected configs.bin; then install_bin_scripts; fi
@@ -927,11 +927,24 @@ if [ -f ~/.bash_show_origin ]; then
     source ~/.bash_show_origin
 fi'
 
+# The bash startup file for the alias loader. Linux terminals start non-login
+# shells, which read only ~/.bashrc; login shells reach it through the
+# ~/.bash_profile (Arch, Fedora) or ~/.profile (Debian) the distro ships.
+# macOS terminals start login shells: there ~/.bash_profile, when it exists.
+bash_rc_file() {
+  if [[ "${1:-}" == "macos" && -f "${TARGET_HOME}/.bash_profile" ]]; then
+    printf '%s\n' "${TARGET_HOME}/.bash_profile"
+  else
+    printf '%s\n' "${TARGET_HOME}/.bashrc"
+  fi
+}
+
 # Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
 # the user already has their own ~/.bash_aliases. Then make bash load all
 # alias files. configs/bash_extras and configs/bash_show_origin always install
 # as ~/.bash_extras and ~/.bash_show_origin.
 install_aliases() {
+  local family="${1:-}"
   local src="${SCRIPT_DIR}/configs/bash_aliases"
   local extra_src="${SCRIPT_DIR}/configs/bash_extras"
   local origin_src="${SCRIPT_DIR}/configs/bash_show_origin"
@@ -944,9 +957,8 @@ install_aliases() {
   install_file "${extra_src}" "${TARGET_HOME}/.bash_extras"
   install_file "${origin_src}" "${TARGET_HOME}/.bash_show_origin"
 
-  # ~/.bash_profile when it exists, else ~/.bashrc.
-  local rc="${TARGET_HOME}/.bash_profile"
-  [[ -f "${rc}" ]] || rc="${TARGET_HOME}/.bashrc"
+  local rc
+  rc="$(bash_rc_file "${family}")"
   # Upgrade: an older loader has .bash_aliases2 (or only .bash_extras) but lacks
   # newer lines. Append just the missing blocks instead of duplicating the loader.
   # Also ensure ~/.local/bin is on PATH (older loaders predate bin scripts).
@@ -984,6 +996,11 @@ install_aliases() {
     printf '\n%s\n' "${ALIAS_LOADER}" >>"${rc}"
   fi
   ok "${rc}"
+  # Older installs put the loader in ~/.bash_profile on Linux too. It is never
+  # deleted for the user; login shells just load the files twice, harmlessly.
+  if [[ "${rc}" == "${TARGET_HOME}/.bashrc" ]] && grep -qsF 'source ~/.bash_extras' "${TARGET_HOME}/.bash_profile"; then
+    info "an older alias loader in ${TARGET_HOME}/.bash_profile can be removed; ${rc} loads the aliases now"
+  fi
 }
 
 # .tmux.conf ends with `run ~/.tmux/plugins/tpm/tpm`, so TPM must exist.
@@ -1172,8 +1189,7 @@ check_item() {
   fi
   case "${key}" in
     configs.aliases)
-      rc="${h}/.bash_profile"
-      [[ -f "${rc}" ]] || rc="${h}/.bashrc"
+      rc="$(bash_rc_file "${family}")"
       if [[ -f "${h}/.bash_extras" && -f "${h}/.bash_show_origin" ]] &&
         [[ -f "${h}/.bash_aliases" || -f "${h}/.bash_aliases2" ]] &&
         grep -qsF 'source ~/.bash_extras' "${rc}"; then echo OK; else echo MISSING; fi
