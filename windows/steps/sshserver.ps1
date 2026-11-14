@@ -1,6 +1,7 @@
 # SSH server step: add the Windows optional feature "OpenSSH Server", set the
 # sshd service to start automatically, start it, and allow TCP 22 inbound from
-# the local network only (firewall RemoteAddress LocalSubnet).
+# the local network only (firewall RemoteAddress LocalSubnet), and only on
+# Private and Domain networks: on a Public one (a cafe) LocalSubnet means strangers.
 # That needs administrator rights: a normal run starts an elevated Windows
 # PowerShell (one UAC prompt) and waits for it. Nothing is done when sshd is
 # already running. ASCII only, PowerShell 5.1 syntax only.
@@ -38,12 +39,13 @@ try {
     Add-WindowsCapability -Online -Name `$Cap.Name | Out-Null
   }
   Set-Stage 75 'allowing TCP 22 from the local network'
-  # Only the local network may connect. The feature's own rule allows any
-  # address, so it is narrowed (or created) with RemoteAddress LocalSubnet.
+  # Only the local network may connect, and only on trusted networks. The
+  # feature's own rule allows any address on every network profile, so it is
+  # narrowed (or created) with RemoteAddress LocalSubnet on Private and Domain.
   if (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue) {
-    Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Enabled True -Action Allow -RemoteAddress LocalSubnet
+    Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Enabled True -Action Allow -RemoteAddress LocalSubnet -Profile Private,Domain
   } else {
-    New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -RemoteAddress LocalSubnet | Out-Null
+    New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -RemoteAddress LocalSubnet -Profile Private,Domain | Out-Null
   }
   # Windows can stage the feature until the next restart: it reports
   # Installed, but sshd.exe and the sshd service appear only after a reboot.
@@ -59,6 +61,43 @@ try {
   exit 1
 }
 "@
+}
+
+# True when the sshd firewall rule admits only the local subnet, and only on
+# trusted (Private, Domain) networks. Reading rules needs no admin rights.
+# -Rule and -Filter override the lookups (tests).
+function Test-StepSshFirewallScoped {
+  param([object]$Rule = $null, [object]$Filter = $null)
+  if ($Rule -eq $null) {
+    try { $Rule = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction Stop } catch { return $false }
+  }
+  if ($Filter -eq $null) {
+    try { $Filter = $Rule | Get-NetFirewallAddressFilter -ErrorAction Stop } catch { return $false }
+  }
+  $Prof = [string]$Rule.Profile
+  if ($Prof -notmatch 'Domain' -or $Prof -notmatch 'Private' -or $Prof -match 'Public|Any') { return $false }
+  return ([string]$Filter.RemoteAddress -eq 'LocalSubnet')
+}
+
+# Names of the connected networks Windows treats as Public, where the rule
+# does not apply. -Profiles overrides Get-NetConnectionProfile (tests).
+function Get-StepPublicNetworks {
+  param([object[]]$Profiles = $null)
+  if ($Profiles -eq $null) {
+    try { $Profiles = @(Get-NetConnectionProfile -ErrorAction Stop) } catch { return @() }
+  }
+  $Out = @()
+  foreach ($P in $Profiles) { if ([string]$P.NetworkCategory -eq 'Public') { $Out += [string]$P.Name } }
+  return $Out
+}
+
+# Windows marks new networks Public, home ones too: say why sshd is not
+# reachable there. Changing the category is the user's trust decision.
+function Write-StepPublicNetworkWarning {
+  param([object[]]$Profiles = $null)
+  foreach ($N in (Get-StepPublicNetworks -Profiles $Profiles)) {
+    Write-StepWarn ("network '" + $N + "' is Public, so sshd is not reachable on it. If you trust it: Settings > Network & internet > " + $N + " > Network profile type > Private")
+  }
 }
 
 # The stage the elevated script last wrote: @{ Percent; Text }, or $null when
@@ -128,10 +167,15 @@ function Read-StepSshServerConfirm {
 $script:StepSshServerSkip = ''
 
 function Invoke-SshServerStep {
-  param([string[]]$Items = @(), [switch]$Verify, [object]$IsAdmin = $null, [object]$Answer = $null)
+  param([string[]]$Items = @(), [switch]$Verify, [object]$IsAdmin = $null, [object]$Answer = $null, [object[]]$NetProfiles = $null)
   $script:StepSshServerSkip = ''
-  if (Test-StepSshdRunning) { Write-StepOk 'OpenSSH server (sshd running)'; return }
-  if ($Verify) { Write-StepInfo 'would install OpenSSH Server, start sshd and open TCP 22 to the local network (asks for administrator rights)'; return }
+  # A rule from an older run may still allow every network: narrow it.
+  if ((Test-StepSshdRunning) -and (Test-StepSshFirewallScoped)) {
+    Write-StepOk 'OpenSSH server (sshd running)'
+    Write-StepPublicNetworkWarning -Profiles $NetProfiles
+    return
+  }
+  if ($Verify) { Write-StepInfo 'would install OpenSSH Server, start sshd and open TCP 22 to the local network on Private and Domain networks (asks for administrator rights)'; return }
   if (-not (Test-StepAdmin -IsAdmin $IsAdmin)) {
     if (-not (Read-StepSshServerConfirm -Answer $Answer)) {
       $script:StepSshServerSkip = 'not confirmed'
@@ -164,6 +208,7 @@ function Invoke-SshServerStep {
     throw ('OpenSSH Server setup failed: ' + $Why)
   }
   if (-not (Test-StepSshdRunning)) { throw 'OpenSSH Server installed but sshd is not running' }
-  Write-StepOk 'OpenSSH server (sshd running, TCP 22 open to the local network)'
+  Write-StepOk 'OpenSSH server (sshd running, TCP 22 open to the local network on Private and Domain networks)'
+  Write-StepPublicNetworkWarning -Profiles $NetProfiles
   Write-StepInfo ('connect from another machine: ssh ' + $env:USERNAME + '@' + $env:COMPUTERNAME)
 }
