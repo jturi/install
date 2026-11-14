@@ -190,6 +190,47 @@ check extras-alg-plain-when-piped "0" "$(bash -c 'source '"${ROOT}"'/configs/bas
 check extras-mkcd "yes" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); mkcd "$d/sub" >/dev/null && [[ "$PWD" == "$d/sub" ]] && echo yes; rm -rf "$d"')"
 check extras-lt "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a b; lt 2 >/dev/null | grep -c "^total"; rm -rf "$d"')"
 
+# again: the previous line (fc prints it with leading blanks) runs as root,
+# split into words the way the shell split it. fc and sudo are stubbed.
+again_case() {
+  "$1" -c 'source "$0"; fc() { printf "\t echo \"a b\" c\n"; }; sudo() { printf "%s|" "$#" "$@"; }; again 2>/dev/null' \
+    "${ROOT}/configs/bash_extras"
+}
+check again-bash "3|echo|a b|c|" "$(again_case bash)"
+if command -v zsh >/dev/null 2>&1; then check again-zsh "3|echo|a b|c|" "$(again_case zsh)"; fi
+check again-empty-rc "1" "$(bash -c 'source "$0"; fc() { :; }; sudo() { echo ran; }; again' "${ROOT}/configs/bash_extras" >/dev/null 2>&1; echo $?)"
+
+# killport: only processes that LISTEN on the port; PIDs split in bash and zsh.
+# lsof is a stub function; kill is a stub on PATH because xargs runs it.
+mkdir -p "${WORK}/kbin"
+printf '#!/bin/sh\necho "kill $*"\n' >"${WORK}/kbin/kill"
+chmod +x "${WORK}/kbin/kill"
+killport_case() {
+  KP_ARGS="${WORK}/kp.args" PATH="${WORK}/kbin:${PATH}" "$1" -c \
+    'source "$0"; lsof() { echo "$*" >"${KP_ARGS}"; [ -z "${LSOF_OUT}" ] || printf "%s\n" 11 22; }; killport "$1"' \
+    "${ROOT}/configs/bash_extras" "$2"
+}
+check killport-bash "kill 11 22" "$(LSOF_OUT=1 killport_case bash 8080 2>&1)"
+check killport-listen-only "1" "$(grep -c -- '-sTCP:LISTEN' "${WORK}/kp.args")"
+check killport-port-arg "1" "$(grep -c -- '-iTCP:8080' "${WORK}/kp.args")"
+if command -v zsh >/dev/null 2>&1; then check killport-zsh "kill 11 22" "$(LSOF_OUT=1 killport_case zsh 8080 2>&1)"; fi
+check killport-none-rc "1" "$(LSOF_OUT='' killport_case bash 8080 >/dev/null 2>&1; echo $?)"
+check killport-not-number-rc "1" "$(LSOF_OUT=1 killport_case bash abc >/dev/null 2>&1; echo $?)"
+
+# duh: smallest first by real size (sort -n on "2.0M" vs "600K" got it wrong).
+dd_dir="${WORK}/duh"
+mkdir -p "${dd_dir}"
+head -c 2097152 /dev/zero >"${dd_dir}/big"
+head -c 614400 /dev/zero >"${dd_dir}/small"
+check duh-order "small big" "$(cd "${dd_dir}" && bash -c 'source "$0"; duh' "${ROOT}/configs/bash_extras" | awk -F'\t' '{print $2}' | xargs)"
+check duh-units "1" "$(cd "${dd_dir}" && bash -c 'source "$0"; duh' "${ROOT}/configs/bash_extras" | grep -c 'M[[:space:]]big$')"
+
+# down: the wget fallback keeps the requested file name.
+mkdir -p "${WORK}/wbin"
+printf '#!/bin/sh\necho "wget $*"\n' >"${WORK}/wbin/wget"
+chmod +x "${WORK}/wbin/wget"
+check down-wget-name "1" "$(bash -c 'PATH="$1"; source "$0"; down http://x/y out.bin' "${ROOT}/configs/bash_extras" "${WORK}/wbin" | grep -c -- '-O out.bin')"
+
 # Helper scripts: tmuxhelp.sh installs executable into ~/.local/bin with a
 # wrapper in bash_extras; idempotent. The PATH line for ~/.local/bin
 # ships inside the alias loader block (and the repo .zshrc).
