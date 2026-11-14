@@ -539,6 +539,8 @@ function global:Invoke-StepElevated {
 # Invoke-CheckStep also checks git and make: stub them so only sshd counts.
 function global:git { }
 function global:make { }
+# The firewall rule counts as scoped unless a test says otherwise.
+function global:Test-StepSshFirewallScoped { $true }
 $SrvRow = New-Object PSObject -Property @{ Action = 'step:ssh-server' }
 Check 'sshd-check-missing' 'False' ([string](Test-CheckItem -Row $SrvRow))
 $SrvPlan = Invoke-SshServerStep -Items @('ssh-server') -Verify | Out-String
@@ -557,11 +559,22 @@ Check 'sshd-script-automatic' 'True' ([string]($global:ElevLog[0] -match 'Set-Se
 Check 'sshd-script-firewall' 'True' ([string]($global:ElevLog[0] -match 'LocalPort 22'))
 # Both the new rule and the narrowed existing rule allow the local subnet only.
 Check 'sshd-script-local-only' '2' ([string]([regex]::Matches($global:ElevLog[0], '-RemoteAddress LocalSubnet').Count))
+# ... and only on trusted networks: on a Public network LocalSubnet means strangers.
+Check 'sshd-script-profiles' '2' ([string]([regex]::Matches($global:ElevLog[0], '-Profile Private,Domain').Count))
 Check 'sshd-ok' 'True' ([string]($SrvOut -match 'sshd running'))
 Check 'sshd-check-ok' 'True' ([string](Test-CheckItem -Row $SrvRow))
 # Already running: nothing elevated again.
 Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null
 Check 'sshd-idempotent' '1' ([string]$global:ElevLog.Count)
+# Running, but the rule is the old unscoped one: elevate once to narrow it.
+function global:Test-StepSshFirewallScoped { $false }
+Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null
+Check 'sshd-narrows-old-rule' '2' ([string]$global:ElevLog.Count)
+function global:Test-StepSshFirewallScoped { $true }
+# Connected to a Public network: the step says sshd is unreachable there.
+$PubNets = @((New-Object PSObject -Property @{ Name = 'HomeWifi'; NetworkCategory = 'Public' }))
+$PubOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true -NetProfiles $PubNets 3>&1 | Out-String
+Check 'sshd-public-network-warns' 'True' ([string]($PubOut -match "network 'HomeWifi' is Public"))
 # Installed but stopped or manual start counts as not running.
 $global:Sshd = New-Object PSObject -Property @{ Status = 'Stopped'; StartType = 'Manual' }
 Check 'sshd-stopped-not-ok' 'False' ([string](Test-StepSshdRunning))
@@ -591,8 +604,20 @@ $ParseErr = $null
 Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
 Check 'sshd-script-writes-status' 'True' ([string]($global:ElevLog[-2] -match [regex]::Escape($global:ElevStatus)))
 Check 'sshd-status-file-removed' 'False' ([string](Test-Path -LiteralPath $global:ElevStatus))
-Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped
 . (Join-Path $StepsDir 'sshserver.ps1')
+# Scoped-rule detection on injected objects (no NetSecurity module in a container).
+$FwRule = New-Object PSObject -Property @{ Profile = 'Domain, Private' }
+$FwAddr = New-Object PSObject -Property @{ RemoteAddress = 'LocalSubnet' }
+Check 'fw-scoped-ok' 'True' ([string](Test-StepSshFirewallScoped -Rule $FwRule -Filter $FwAddr))
+Check 'fw-scoped-any' 'False' ([string](Test-StepSshFirewallScoped -Rule (New-Object PSObject -Property @{ Profile = 'Any' }) -Filter $FwAddr))
+Check 'fw-scoped-public' 'False' ([string](Test-StepSshFirewallScoped -Rule (New-Object PSObject -Property @{ Profile = 'Private, Public' }) -Filter $FwAddr))
+Check 'fw-scoped-private-only' 'False' ([string](Test-StepSshFirewallScoped -Rule (New-Object PSObject -Property @{ Profile = 'Private' }) -Filter $FwAddr))
+Check 'fw-scoped-any-address' 'False' ([string](Test-StepSshFirewallScoped -Rule $FwRule -Filter (New-Object PSObject -Property @{ RemoteAddress = 'Any' })))
+Check 'fw-scoped-no-rule' 'False' ([string](Test-StepSshFirewallScoped))
+$Nets = @((New-Object PSObject -Property @{ Name = 'Cafe'; NetworkCategory = 'Public' }), (New-Object PSObject -Property @{ Name = 'Office'; NetworkCategory = 'DomainAuthenticated' }), (New-Object PSObject -Property @{ Name = 'Home'; NetworkCategory = 'Private' }))
+Check 'public-networks' 'Cafe' ((Get-StepPublicNetworks -Profiles $Nets) -join ',')
+Check 'public-networks-none' '0' ([string]@(Get-StepPublicNetworks -Profiles @($Nets[2])).Count)
 
 # Progress bar: the status file the elevated script writes, and the percent.
 $StatusFile = Join-Path $Work 'ssh.status'
