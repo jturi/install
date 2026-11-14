@@ -437,6 +437,8 @@ run_main() {
     setup_ssh_key() { echo ssh-key >>"${m_log}"; }
     setup_zsh_default() { echo zsh-login >>"${m_log}"; }
     restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; }
+    ssh_server_fail_closed() { echo "fail-closed $2" >>"${m_log}"; return 1; }
+    check_ssh_server() { echo MISSING; }
     check_selection() { :; }
     [[ -z "${M_EXTRA:-}" ]] || eval "${M_EXTRA}"
     main "$@"
@@ -468,7 +470,19 @@ check main-no-configs "packages" "$(steps)"
 m_reset; run_main --ssh-server --yes >/dev/null
 check main-ssh-server "packages ssh-server configs tpm" "$(steps)"
 m_reset; run_main --ssh-server --ssh-local-only --yes >/dev/null
-check main-ssh-local-only "packages ssh-server ssh-local-only configs tpm" "$(steps)"
+check main-ssh-local-only "packages ssh-local-only ssh-server configs tpm" "$(steps)"
+# The restriction fails: the server step closes instead of enabling, and is
+# told whether sshd already ran before this run.
+m_reset; M_EXTRA='restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; return 1; }'
+run_main --ssh-server --ssh-local-only --yes >/dev/null
+check main-ssh-fail-closed "packages ssh-local-only fail-closed 0 configs tpm" "$(steps)"
+m_reset; M_EXTRA='restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; return 1; }; check_ssh_server() { echo OK; }'
+run_main --ssh-server --ssh-local-only --yes >/dev/null
+check main-ssh-fail-closed-was-running "packages ssh-local-only fail-closed 1 configs tpm" "$(steps)"
+# Restriction alone (no server item): a failure touches no server.
+m_reset; M_EXTRA='restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; return 1; }'
+run_main --ssh-local-only --yes >/dev/null
+check main-ssh-local-only-alone "packages ssh-local-only configs tpm" "$(steps)"
 # The check step runs last on a real run, never on a dry run.
 m_reset; M_EXTRA='check_selection() { echo check >>"${m_log}"; }'; run_main --yes >/dev/null
 check main-check-last "${DEFAULT_STEPS} check" "$(steps)"
@@ -660,6 +674,27 @@ check lockout-unverifiable-says "1" "$(grep -c 'sshd -T failed' <<<"${out}")"
 check ssh-connection-tmux "9.9.9.9 1 ${TEN}.1 22" "$( (tmux() { echo "SSH_CONNECTION=9.9.9.9 1 ${TEN}.1 22"; }; TMUX=x SSH_CONNECTION=stale ssh_connection) )"
 check ssh-connection-tmux-unset "stale" "$( (tmux() { echo "-SSH_CONNECTION"; }; TMUX=x SSH_CONNECTION=stale ssh_connection) )"
 check ssh-connection-plain "a b c d" "$(SSH_CONNECTION='a b c d' ssh_connection)"
+
+# Fail closed: an sshd this run brought up is stopped when the restriction
+# failed; one that ran before is left alone (it may carry the user's session).
+fail_closed() {
+  (
+    as_root() { echo "as_root $*"; }
+    systemctl() { :; }
+    SYSTEMD_RUN_DIR="${WORK}"
+    ssh_server_fail_closed "$1" "$2"
+  ) 2>&1
+}
+out="$(fail_closed debian 1)"; rc=$?
+check fail-closed-was-running-rc "1" "${rc}"
+check fail-closed-was-running-untouched "0" "$(grep -c as_root <<<"${out}")"
+check fail-closed-was-running-warns "1" "$(grep -c 'WITHOUT the local-network restriction' <<<"${out}")"
+out="$(fail_closed debian 0)"; rc=$?
+check fail-closed-new-rc "1" "${rc}"
+check fail-closed-debian-stops "1" "$(grep -c 'as_root systemctl disable --now ssh.socket ssh$' <<<"${out}")"
+check fail-closed-fedora-stops "1" "$(fail_closed fedora 0 | grep -c 'as_root systemctl disable --now sshd.socket sshd$')"
+check fail-closed-macos-no-action "0" "$(fail_closed macos 0 | grep -c as_root)"
+check fail-closed-no-systemd "0" "$( (as_root() { echo "as_root $*"; }; SYSTEMD_RUN_DIR="${WORK}/none"; ssh_server_fail_closed debian 0) 2>&1 | grep -c as_root)"
 
 # The real sshd decides what the drop-in refuses (skipped when there is none).
 real_sshd="$(sshd_path 2>/dev/null || true)"
