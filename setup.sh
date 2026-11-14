@@ -47,6 +47,7 @@ DEBUG=0
 LOGGING=1
 STEP_LABELS=() STEP_STATUS=() STEP_TIME=()
 STEP_WARN_FILE="" RUN_DIR="" LOCK_DIR="" LOG_FILE="" SUDO_KEEPALIVE="" TEE_PID=""
+SSH_CLIENT_ADDR="" # set by ssh_session_denied, for its caller's message
 KEEP_LOGS=20
 
 # catalog item : config source (relative to configs/) : target (relative to $TARGET_HOME)
@@ -566,8 +567,47 @@ reload_sshd() {
   as_root systemctl reload "${svc}" || warn "could not reload ${svc}; restart it to apply the restriction"
 }
 
+# The SSH_CONNECTION of the session running setup ("client cport server
+# sport"), or nothing on a local console. Inside tmux a pane keeps the value
+# from when it was created; tmux refreshes its own copy on every attach.
+ssh_connection() {
+  local v=""
+  if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
+    v="$(tmux show-environment SSH_CONNECTION 2>/dev/null || true)"
+    if [[ "${v}" == SSH_CONNECTION=* ]]; then
+      printf '%s\n' "${v#SSH_CONNECTION=}"
+      return 0
+    fi
+  fi
+  printf '%s\n' "${SSH_CONNECTION:-}"
+}
+
+# True when the installed sshd config would refuse the SSH session running
+# setup. sshd evaluates its own Match blocks (-T -C), so this never disagrees
+# with a real login. Also true when we are on SSH but sshd cannot answer: an
+# unverifiable restriction must not go live under a remote user.
+ssh_session_denied() {
+  local sshd="$1" out
+  # shellcheck disable=SC2046 # split "client cport server sport" into words
+  set -- $(ssh_connection)
+  if [[ $# -ne 4 ]]; then
+    if is_root && [[ -n "${SUDO_USER:-}" ]]; then
+      warn "running under sudo: cannot tell whether you are connected over SSH"
+    fi
+    return 1
+  fi
+  SSH_CLIENT_ADDR="$1"
+  out="$(root_quiet "${sshd}" -T -f "${SSH_CONFIG_DIR}/sshd_config" \
+    -C "user=$(current_user),host=$1,addr=$1,laddr=$3,lport=$4" 2>/dev/null)" || {
+    warn "cannot check that your SSH session from $1 stays allowed (sshd -T failed)"
+    return 0
+  }
+  grep -qi '^denyusers \*$' <<<"${out}"
+}
+
 # Install the local-network-only drop-in, check it with sshd -t, reload sshd.
-# A config sshd rejects is removed again, so sshd never stays broken.
+# A config sshd rejects is removed again, so sshd never stays broken. Over SSH,
+# a config that would refuse this very session is removed too.
 restrict_ssh_local_only() {
   local family="$1" dst="${SSH_CONFIG_DIR}/sshd_config.d/${SSH_LOCAL_CONF_NAME}" sshd tmp
   if ! sshd="$(sshd_path)" || [[ ! -f "${SSH_CONFIG_DIR}/sshd_config" ]]; then
@@ -590,8 +630,13 @@ restrict_ssh_local_only() {
   # No backup next to it: macOS includes every file in sshd_config.d, .bak too.
   as_root install -m 644 "${tmp}" "${dst}"
   rm -f "${tmp}"
-  if ((!DRY_RUN)) && ! root_quiet "${sshd}" -t; then
+  if ((!DRY_RUN)) && ! root_quiet "${sshd}" -t -f "${SSH_CONFIG_DIR}/sshd_config"; then
     warn "sshd rejected the new config; removing ${dst}"
+    as_root rm -f "${dst}"
+    return 1
+  fi
+  if ((!DRY_RUN)) && ssh_session_denied "${sshd}"; then
+    warn "you are connected over SSH from ${SSH_CLIENT_ADDR}, which this restriction refuses; removing ${dst}. Run setup from the local network or the console."
     as_root rm -f "${dst}"
     return 1
   fi
