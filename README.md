@@ -160,8 +160,14 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
    - **OpenSSH server (sshd)** (off by default): adds the Windows optional
      feature `OpenSSH.Server`, sets the `sshd` service to start automatically,
      starts it and allows TCP 22 inbound from the local network only (firewall
-     rule `OpenSSH-Server-In-TCP` with `RemoteAddress LocalSubnet`; the
-     feature's own allow-any rule is narrowed to that). It needs
+     rule `OpenSSH-Server-In-TCP` with `RemoteAddress LocalSubnet`, on
+     Private and Domain networks only; the feature's own allow-any rule is
+     narrowed to that, also on a machine where an older run left it open).
+     On a Public network (a cafe) "local subnet" means strangers, so sshd is
+     not reachable there. Windows marks new networks Public, home ones too:
+     the step names each connected Public network and how to mark it Private
+     (Settings > Network & internet > the network > Network profile type);
+     it does not change the category itself. It needs
      administrator rights: setup first asks `Install SSH server with admin
      rights? [Y/n]` (no means SKIPPED in the check), then Windows shows one
      UAC prompt. If Windows stages the feature until a restart, the step says
@@ -268,12 +274,28 @@ package manager:
   `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local and IPv6
   unique-local addresses. sshd enforces it itself, so it works the same on every
   distro and macOS, with or without a firewall. Tailscale and other VPN ranges
-  (`100.64.0.0/10`) count as outside. The step adds an
+  (`100.64.0.0/10`) count as outside, and so do global IPv6 addresses
+  (`2000::/3`), even ones on your own LAN: their prefix comes from the ISP and
+  changes, so it cannot be listed. To allow more, add the range to the
+  `Match Address` list as `!100.64.0.0/10`; a second drop-in cannot do it,
+  because sshd adds `DenyUsers` lines up instead of letting one override the
+  other. A run with this item ticked rewrites the file, so untick it once you
+  edit the file yourself. The step adds an
   `Include /etc/ssh/sshd_config.d/*.conf` line to the top of `sshd_config` when
   it lacks one (backup first), generates missing host keys (`ssh-keygen -A`),
   checks the result with `sshd -t` (a rejected file is removed again) and
   reloads a running sshd. To lift the restriction, delete that file and reload
   sshd (macOS: nothing to reload).
+  - **No lock-out.** Run over SSH, setup asks sshd (`sshd -T -C addr=…`)
+    whether your own session would be refused, and if so removes the file and
+    fails the step. Inside tmux the address comes from tmux's session
+    environment, which is updated on attach. Under `sudo ./setup.sh` the SSH
+    address is usually not visible; setup warns.
+  - **Fails closed.** With both SSH items ticked, the restriction goes in
+    before sshd is enabled. If it fails, sshd is not enabled, and an sshd this
+    run brought up (Debian and Ubuntu start `ssh` as soon as the package
+    installs) is disabled again. An sshd that already ran before the run keeps
+    running, with a warning, so a remote session is never cut off.
 - Configs (`configs/` → `$HOME`):
   - `tmux.conf` → `~/.tmux.conf` (copy of `dotfiles/dot_tmux.conf`, prefix `Ctrl+a`)
   - `nanorc` → `~/.nanorc`
