@@ -125,6 +125,19 @@ check symlink-replaced "file" "$([[ -f "${home}/.zshrc" && ! -L "${home}/.zshrc"
 check symlink-target-kept "linked" "$(cat "${WORK}/link-target")"
 check symlink-backup "1" "$(find "${home}" -maxdepth 1 -name '.zshrc.bak.*' | wc -l | tr -d ' ')"
 
+# private_dir: created 0700, tightened when looser, silent when already private.
+pd="${WORK}/pd"
+check private-dir-new "700" "$(private_dir "${pd}/new" >/dev/null; stat -c %a "${pd}/new" 2>/dev/null || stat -f %Lp "${pd}/new")"
+mkdir -p "${pd}/open" && chmod 755 "${pd}/open"
+check private-dir-tightened "700" "$(private_dir "${pd}/open" >/dev/null; stat -c %a "${pd}/open" 2>/dev/null || stat -f %Lp "${pd}/open")"
+check private-dir-quiet "" "$(private_dir "${pd}/open")"
+check private-dir-dry-run "no" "$(DRY_RUN=1 private_dir "${pd}/dry" >/dev/null; [[ -e "${pd}/dry" ]] && echo yes || echo no)"
+# The tmux config comes with a private save directory: resurrect keeps what
+# was on screen there.
+th="${WORK}/tmux_home"
+mkdir -p "${th}"
+check tmux-resurrect-private "700" "$(TARGET_HOME="${th}"; load_catalog arch; config_load "${WORK}/none"; install_configs arch >/dev/null 2>&1; stat -c %a "${th}/.local/share/tmux/resurrect" 2>/dev/null || stat -f %Lp "${th}/.local/share/tmux/resurrect")"
+
 # Aliases: fresh home gets ~/.bash_aliases, ~/.bash_extras, and a loader in ~/.bashrc.
 ah="${WORK}/alias_home"
 mkdir -p "${ah}"
@@ -509,6 +522,18 @@ check main-ssh-fail-closed-was-running "packages ssh-local-only fail-closed 1 co
 m_reset; M_EXTRA='restrict_ssh_local_only() { echo ssh-local-only >>"${m_log}"; return 1; }'
 run_main --ssh-local-only --yes >/dev/null
 check main-ssh-local-only-alone "packages ssh-local-only configs tpm" "$(steps)"
+# Private state: logs and the saved selection live in a 0700 directory.
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+m_reset; run_main --yes >/dev/null
+check state-dir-private "700" "$(mode_of "${m_home}/.local/bootstrap")"
+# The Arch plan names the full upgrade that installing a package triggers.
+printf 'ID=arch\n' >"${WORK}/os-arch-plan"
+m_reset; M_EXTRA='OS_RELEASE_FILE="${WORK}/os-arch-plan"'
+check plan-arch-upgrade-note "1" "$(run_main --dry-run --yes | grep -c 'full system upgrade (pacman -Syu)')"
+check plan-arch-no-packages-no-note "0" "$(run_main --dry-run --yes --no-packages | grep -c 'full system upgrade')"
+m_reset
+check plan-debian-no-note "0" "$(run_main --dry-run --yes | grep -c 'full system upgrade')"
+
 # The check step runs last on a real run, never on a dry run.
 m_reset; M_EXTRA='check_selection() { echo check >>"${m_log}"; }'; run_main --yes >/dev/null
 check main-check-last "${DEFAULT_STEPS} check" "$(steps)"

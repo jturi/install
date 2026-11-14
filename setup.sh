@@ -267,7 +267,7 @@ apply_flag_overrides() {
 
 # Print what this run will do, one group per line.
 print_plan() {
-  local group i install skip
+  local family="${1:-}" group i install skip
   info "Plan"
   while IFS= read -r group; do
     install="" skip=""
@@ -282,6 +282,11 @@ print_plan() {
     [[ -z "${install}" ]] || printf '  install %-13s %s\n' "${group}" "${install}"
     [[ -z "${skip}" ]] || printf '  skip    %-13s %s\n' "${group}" "${skip}"
   done < <(catalog_groups)
+  # pacman -Syu: Arch does not support partial upgrades, and -S against a
+  # stale package database fails. Say so before "Go ahead?".
+  if [[ "${family}" == "arch" ]] && action_selected pkg; then
+    printf '  note    on Arch, installing a missing package runs a full system upgrade (pacman -Syu)\n'
+  fi
 }
 
 # Run one step in a subshell, so `set -e` works inside it and a failure does not
@@ -712,6 +717,16 @@ backup_file() {
   run cp -P "${file}" "${backup}"
 }
 
+# Make a directory only its owner can read: setup logs, the saved selection
+# and tmux saves can hold what was on screen. Silent when it already is, so
+# reruns stay quiet.
+private_dir() {
+  local dir="$1"
+  if [[ -d "${dir}" && "$(ls -ld "${dir}")" == drwx------* ]]; then return 0; fi
+  run mkdir -p "${dir}"
+  run chmod 700 "${dir}"
+}
+
 # Copy src to dst. Back up an existing dst first; skip if identical.
 install_file() {
   local src="$1" dst="$2"
@@ -862,6 +877,10 @@ install_configs() {
     install_file "${src}" "${TARGET_HOME}/${entry#*:}"
   done
   [[ -z "${tmp_dir}" ]] || rm -rf "${tmp_dir}"
+  # tmux-resurrect (in tmux.conf) saves pane contents here every few minutes.
+  # tmux.conf comes from the dotfiles repo, so the setting is protected here
+  # instead of edited.
+  if item_selected configs.tmux; then private_dir "${TARGET_HOME}/.local/share/tmux/resurrect"; fi
   if item_selected configs.aliases; then install_aliases "${family}"; fi
   # Scripts only (no PATH appends here): the loader block and repo .zshrc
   # already export ~/.local/bin, so reruns stay idempotent.
@@ -1440,6 +1459,7 @@ start_run() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   ((!DRY_RUN)) || return 0
+  private_dir "${state}" >/dev/null || warn "cannot make ${state} private"
   take_lock "${state}/lock"
   ((!LOGGING)) || start_log "${state}/logs"
   [[ -z "${LOG_FILE}" ]] || info "Logging to ${LOG_FILE}"
@@ -1470,7 +1490,7 @@ main() {
     return 0
   fi
   apply_flag_overrides
-  print_plan
+  print_plan "${family}"
   confirm "Go ahead?" || { info "Nothing saved, nothing installed."; return 0; }
   if ((menu)); then
     config_save "${CONFIG_FILE}" || die "cannot save ${CONFIG_FILE}; nothing installed"
