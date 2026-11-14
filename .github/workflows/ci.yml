@@ -64,7 +64,13 @@ jobs:
           BOOTSTRAP_URL: https://api.github.com/repos/${{ github.repository }}/zipball/${{ github.sha }}
           INSTALL_DRYRUN: '1'
           INSTALL_ALLOW_ADMIN: '1'
-          INSTALL_ITEMS: wezterm,vlc
         run: |
-          .\bootstrap.ps1
-          if (-not (Test-Path "$env:USERPROFILE\install\.source")) { exit 1 }
+          # The selection comes from the saved config, as on a real machine.
+          $cfg = Join-Path $env:USERPROFILE '.local\bootstrap'
+          New-Item -ItemType Directory -Force $cfg | Out-Null
+          [IO.File]::WriteAllText("$cfg\config", "terminals.wezterm=1`nwin-apps.vlc=1`n")
+          $out = .\bootstrap.ps1 *>&1 | Out-String
+          Write-Output $out
+          if ($out -notmatch 'would install extras/vlc') { throw 'vlc not planned' }
+          if ($out -notmatch 'would install WezTerm') { throw 'wezterm not planned' }
+          if (-not (Test-Path "$env:USERPROFILE\install\.source")) { throw 'no .source' }
