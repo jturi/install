@@ -1,5 +1,6 @@
 # shellcheck shell=bash disable=SC2034 # CAT_* arrays are read by setup.sh and menu.sh
-# Catalog of selectable items. Sourced by setup.sh; needs die() and pkg_name().
+# Catalog of selectable items. Sourced by setup.sh; needs die(), pkg_name()
+# and private_dir().
 # Works with bash 3.2: parallel arrays instead of associative ones.
 #
 # catalog.txt format, one item per line:
@@ -156,7 +157,14 @@ config_load() {
 config_save() {
   local file="$1" tmp="$1.tmp.$$" i
   ((!DRY_RUN)) || return 0
-  mkdir -p "$(dirname "${file}")" || return 1
+  local dir
+  dir="$(dirname "${file}")"
+  # The default directory also holds the logs: keep it private (setup.sh).
+  if [[ "${dir}" == "${TARGET_HOME}/.local/bootstrap" ]]; then
+    private_dir "${dir}" >/dev/null || return 1
+  else
+    mkdir -p "${dir}" || return 1
+  fi
   {
     printf '%s\n' "${CONFIG_HEADER}"
     {
