@@ -645,7 +645,9 @@ bash_rc_file() {
 | 11 | `70dcadb` | Correction found while writing it: a second drop-in **cannot** allow a range, because sshd adds `DenyUsers` lines up (checked with `sshd -T`). The README says to edit the Match list and untick the item |
 
 **Found, not fixed (outside this plan):**
-- `tests/test_windows.ps1`: `sshd-declined-check-skipped` and `sshd-restart-check-skipped` fail in the Linux container before and after this work: the check step counts `git` and `make` as missing there. Expected to pass on Windows with both installed.
+- ~~`tests/test_windows.ps1`: two SSH check tests fail in the container~~ Incomplete, corrected in the follow-up batch: the container run also **aborted** at a Windows-only test (`powershell.exe -WindowStyle`), silently skipping every check after it. Fixed in `2704320`; the container suite now runs to the end and passes (158 checks, 1 Windows-only skip).
 - The manual Windows CI job runs elevated, and `setup.ps1` refuses to run elevated without Scoop. Before Task 7 that failure was swallowed; now `bootstrap.ps1` reports it. If the job fails there, that is the reason, not the config change.
 
-**Still open:** Task 6 Step 4 (real Windows), Task 11's VM end-to-end over SSH from a public address, and the follow-up batch.
+**Follow-up batch** (2026-11-15): `fe10c58` (`ltt` in large trees, `bootstrap.sh` restores echo after Ctrl-C, tested in a pty), `2704320` (Windows backups with a `.n` suffix, atomic `Install-StepFile`, VS Code extension failures reported and a CLI fallback, `bootstrap.ps1` pulls a git clone and frees the token BSTR, Windows test harness fixed).
+
+**Still open:** Task 6 Step 4 (real Windows) and Task 11's VM end-to-end over SSH from a public address.
