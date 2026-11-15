@@ -232,6 +232,19 @@ check extras-alg-plain-when-piped "0" "$(bash -c 'source '"${ROOT}"'/configs/bas
 check extras-mkcd "yes" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); mkcd "$d/sub" >/dev/null && [[ "$PWD" == "$d/sub" ]] && echo yes; rm -rf "$d"')"
 check extras-lt "0" "$(bash -c 'source '"${ROOT}"'/configs/bash_extras; d=$(mktemp -d); cd "$d"; touch a b; lt 2 >/dev/null | grep -c "^total"; rm -rf "$d"')"
 
+# ltt: works where the file list exceeds the argument limit (the old version
+# passed every file to one ls and printed nothing).
+lt_dir="${WORK}/ltt"
+mkdir -p "${lt_dir}"
+(cd "${lt_dir}" && seq 1 40000 | sed 's/^/file-with-a-long-enough-name-to-pass-the-argument-limit-/' | xargs touch -t 202001010000)
+touch "${lt_dir}/newest"
+check ltt-many-files "newest" "$(cd "${lt_dir}" && bash -c 'source "$0"; ltt 1' "${ROOT}/configs/bash_extras" | awk '{print $NF}' | sed 's#^\./##')"
+if command -v zsh >/dev/null 2>&1; then
+  check ltt-zsh "newest" "$(cd "${lt_dir}" && zsh -c 'source "$0"; ltt 1' "${ROOT}/configs/bash_extras" | awk '{print $NF}' | sed 's#^\./##')"
+fi
+rm -rf "${lt_dir}"
+check ltt-empty "" "$(mkdir -p "${WORK}/ltt-empty" && cd "${WORK}/ltt-empty" && bash -c 'source "$0"; ltt 3' "${ROOT}/configs/bash_extras")"
+
 # again: the previous line (fc prints it with leading blanks) runs as root,
 # split into words the way the shell split it. fc and sudo are stubbed.
 again_case() {
