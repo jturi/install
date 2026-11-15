@@ -59,10 +59,18 @@ if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)
     return $true
   }
 
+  # Next free <file>.bak.<time>[.n]: two backups in one second both stay.
+  function Get-StepBackupPath($File) {
+    $Base = $File + '.bak.' + (Get-Date -Format 'yyyyMMdd_HHmmss')
+    $Bak = $Base
+    $n = 0
+    while (Test-Path -LiteralPath $Bak) { $n++; $Bak = $Base + '.' + $n }
+    return $Bak
+  }
+
   function Backup-StepFile($File) {
-    if (-not (Test-Path $File)) { return }
-    $Stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    Copy-Item -Force $File ($File + '.bak.' + $Stamp)
+    if (-not (Test-Path -LiteralPath $File)) { return }
+    Copy-Item -LiteralPath $File (Get-StepBackupPath $File)
   }
 
   function Install-StepFile($Src, $Dst) {
@@ -74,7 +82,16 @@ if (-not (Get-Variable -Name WinStepHelpersLoaded -ErrorAction SilentlyContinue)
     Backup-StepFile $Dst
     $Dir = Split-Path $Dst -Parent
     if ($Dir -and $Dir -ne '') { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
-    Copy-Item -Force $Src $Dst
+    # Write a temp file next to it, then swap it in: an interrupted run never
+    # leaves a half-written config.
+    $Tmp = $Dst + '.tmp.' + $PID
+    try {
+      Copy-Item -LiteralPath $Src $Tmp -Force
+      Move-Item -LiteralPath $Tmp $Dst -Force
+    } catch {
+      Remove-Item -LiteralPath $Tmp -Force -ErrorAction SilentlyContinue
+      throw
+    }
     Write-StepOk $Dst
   }
 
