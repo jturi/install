@@ -438,6 +438,8 @@ Remove-Item Function:\wsl.exe
 $SavedGitGlobal = $env:GIT_CONFIG_GLOBAL
 # The check tests stub git as a no-op; this section needs the real one.
 Remove-Item Function:\git -ErrorAction SilentlyContinue
+# The Linux test container has no git: the checks that read git's own config skip there.
+$HasGit = [bool](Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
 $GitGlobal = Join-Path $Work 'gitconfig-test'
 $GitEmpty = Join-Path $Work 'gitconfig-empty'
 $Utf8 = New-Object Text.UTF8Encoding($false)
@@ -467,8 +469,8 @@ Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
 Check 'git-asked-twice' '2' ([string]$global:PromptLog.Count)
 Check 'git-config-user' 'octo' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
 Check 'git-config-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
-Check 'git-global-name' 'octo' (Get-StepGitGlobal 'user.name')
-Check 'git-global-email' 'octo@example.com' (Get-StepGitGlobal 'user.email')
+if ($HasGit) { Check 'git-global-name' 'octo' (Get-StepGitGlobal 'user.name') } else { Write-Output 'SKIP git-global-name: needs git' }
+if ($HasGit) { Check 'git-global-email' 'octo@example.com' (Get-StepGitGlobal 'user.email') } else { Write-Output 'SKIP git-global-email: needs git' }
 # Next run: the saved values are offered; Enter keeps them, no new prompt text.
 $global:Prompts = @('', '')
 Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
@@ -480,7 +482,7 @@ $global:Prompts = @('n', 'newname', '')
 Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
 Check 'git-change-user' 'newname' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
 Check 'git-change-keeps-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
-Check 'git-change-global' 'newname' (Get-StepGitGlobal 'user.name')
+if ($HasGit) { Check 'git-change-global' 'newname' (Get-StepGitGlobal 'user.name') } else { Write-Output 'SKIP git-change-global: needs git' }
 # Config keeps other settings: a catalog flag written earlier survives.
 Set-ConfigValue -Path $GitCfg -Key 'terminals.wezterm' -Value '1'
 Check 'git-config-keeps-flags' '1' (Get-ConfigValue -Path $GitCfg -Key 'terminals.wezterm')
@@ -578,7 +580,7 @@ Check 'sshd-verify-plans' 'True|0' (([string]($SrvPlan -match 'would install Ope
 Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $false 3>$null | Out-Null
 Check 'sshd-declined-no-elevation' '0' ([string]$global:ElevLog.Count)
 $DeclOut = Invoke-CheckStep -Catalog @((New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-server'; Label = 'OpenSSH server (sshd)'; Action = 'step:ssh-server'; Selected = $true })) -Missing ([ref]$SkipMissing) | Out-String
-Check 'sshd-declined-check-skipped' 'True|0' (([string]($DeclOut -match '(?m)^SKIPPED OpenSSH server \(sshd\) \(not confirmed\)')) + '|' + $SkipMissing)
+Check 'sshd-declined-check-skipped' 'True|0' (([string]($DeclOut -match '(?m)^  SKIPPED +OpenSSH server \(sshd\) \(not confirmed\)')) + '|' + $SkipMissing)
 # The question comes only without admin rights: an admin run has no popup.
 Check 'sshd-admin-no-question' 'True' ([string]((Get-Content -Raw (Join-Path $StepsDir 'sshserver.ps1')) -match "if \(-not \(Test-StepAdmin -IsAdmin \`$IsAdmin\)\) \{\s+if \(-not \(Read-StepSshServerConfirm"))
 $SrvOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $true | Out-String
@@ -633,7 +635,7 @@ $ParseErr = $null
 Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
 Check 'sshd-script-writes-status' 'True' ([string]($global:ElevLog[-2] -match [regex]::Escape($global:ElevStatus)))
 Check 'sshd-status-file-removed' 'False' ([string](Test-Path -LiteralPath $global:ElevStatus))
-Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped, Function:\git, Function:\make
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped
 . (Join-Path $StepsDir 'sshserver.ps1')
 # Scoped-rule detection on injected objects (no NetSecurity module in a container).
 $FwRule = New-Object PSObject -Property @{ Profile = 'Domain, Private' }
