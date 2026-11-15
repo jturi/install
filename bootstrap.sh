@@ -47,9 +47,13 @@
         exit 1
       fi
       printf 'Download failed; the repo may be private.\nGitHub token (hidden, blank to abort): ' >/dev/tty
+      # Ctrl-C at the prompt must not leave the terminal without echo.
+      tty_state="$(stty -g </dev/tty)"
+      trap 'stty "$tty_state" </dev/tty 2>/dev/null; rm -rf "$tmp"' EXIT
+      trap 'exit 130' INT TERM
       stty -echo </dev/tty
       IFS= read -r token </dev/tty || true
-      stty echo </dev/tty
+      stty "$tty_state" </dev/tty
       echo >/dev/tty
       [ -n "$token" ] || exit 1
       fetch "$url" "$token" >"$tmp/repo.tgz"

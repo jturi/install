@@ -74,4 +74,21 @@ bad() {
 if bad; then printf 'FAIL bootstrap-bad-url-fails\n'; fails=$((fails + 1)); else printf 'PASS bootstrap-bad-url-fails\n'; fi
 check bootstrap-bad-url-no-dir test ! -e "${TMP}/bad/install"
 
+# Ctrl-C at the hidden token prompt gives the terminal its echo back. Needs a
+# pty: util-linux script(1). The outer bash survives the ^C and prints the
+# terminal state afterwards.
+if script --version 2>/dev/null | grep -q util-linux; then
+  # A gh that knows no token, so the prompt shows whatever the developer's gh holds.
+  mkdir -p "${TMP}/no-gh"
+  printf '#!/bin/sh\nexit 1\n' >"${TMP}/no-gh/gh"
+  chmod +x "${TMP}/no-gh/gh"
+  out="$( { sleep 2; printf '\003'; sleep 1; } |
+    HOME="${TMP}/tty" BOOTSTRAP_URL="file://${TMP}/missing.tgz" GITHUB_TOKEN='' PATH="${TMP}/no-gh:${PATH}" \
+      script -qec "bash -c 'trap : INT; sh \"${ROOT}/bootstrap.sh\"; stty -a'" /dev/null 2>&1 | tr -d '\r' || true)"
+  check bootstrap-token-prompt grep -q 'GitHub token' <<<"${out}"
+  check bootstrap-ctrl-c-restores-echo grep -qE '(^| )echo( |$)' <<<"${out}"
+else
+  echo "SKIP bootstrap-ctrl-c: no util-linux script"
+fi
+
 exit "${fails}"

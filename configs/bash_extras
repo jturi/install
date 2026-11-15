@@ -34,19 +34,24 @@ lt() {
 }
 
 # ltt [count]: newest files under $PWD, any depth.
-# Portable: skips .git/node_modules, prints size + path (macOS lacks -printf,
-# BSD xargs lacks -r, so a read loop feeds ls instead).
+# Portable: skips .git/node_modules. stat (GNU -c, BSD -f; macOS find lacks
+# -printf) gives each file's mtime through xargs, so any number of files
+# works; only the newest <count> go to ls for the long listing.
 ltt() {
-  local n="${1:-10}"
+  local n="${1:-10}" f
   case "$n" in
     ''|*[!0-9]*) echo "usage: ltt [count]" >&2; return 1 ;;
   esac
-  find . \( -name .git -o -name node_modules -o -name __pycache__ \
-    -o -name .venv -o -name venv -o -name target \) -prune \
-    -o -type f -print0 2>/dev/null \
-    | { files=(); while IFS= read -r -d '' f; do files+=("$f"); done
-        ((${#files[@]})) && ls -lthd -- "${files[@]}"; } 2>/dev/null \
-    | head -n "$n"
+  local -a st files
+  if stat -c %Y . >/dev/null 2>&1; then st=(stat -c '%Y %n'); else st=(stat -f '%m %N'); fi
+  files=()
+  while IFS= read -r f; do files+=("$f"); done < <(
+    find . \( -name .git -o -name node_modules -o -name __pycache__ \
+      -o -name .venv -o -name venv -o -name target \) -prune \
+      -o -type f -print0 2>/dev/null |
+      xargs -0 "${st[@]}" 2>/dev/null | sort -rn | head -n "$n" | cut -d' ' -f2-)
+  ((${#files[@]})) || return 0
+  ls -lthd -- "${files[@]}"
 }
 
 # --- tmux ---
