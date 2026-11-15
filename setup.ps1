@@ -150,6 +150,9 @@ function Invoke-Setup {
   if ($Verify -or $DryRun) { Set-SetupExecutionPolicy -Verify } else { Set-SetupExecutionPolicy }
   if (-not $HasScoop -and -not $Verify -and -not $DryRun) {
     Write-Output 'Scoop not found: installing from https://get.scoop.sh ...'
+    # This is a new powershell.exe: bootstrap.ps1's TLS setting does not carry
+    # over, and some Windows PowerShell 5.1 setups still default to TLS 1.0.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     try { Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://get.scoop.sh')) } catch { throw }
   }
   foreach ($Row in $Catalog) { $Row.New = $false }
@@ -182,9 +185,15 @@ function Invoke-Setup {
   }
   if ($Select) { Write-Output 'Done.'; return 0 }
   $Watch = [Diagnostics.Stopwatch]::StartNew()
+  # -Yes without the menu asks nothing of its own: saved values are used, and
+  # a ticked SSH server goes straight to the Windows UAC prompt (like sudo in
+  # setup.sh --yes). With no console there is nobody to click it: skipped.
+  $Unattended = ($Yes -and -not $menuShown)
+  $SshAnswer = $null
+  if ($Unattended) { $SshAnswer = [bool](Test-StepSshConsole) }
   # Right after the selection: ask for the GitHub username and email (once).
   Write-StepSection 'Git identity'
-  try { Invoke-GitIdentityStep -ConfigPath $Cfg } catch { Write-StepWarn ('git identity: ' + $_.Exception.Message) }
+  try { Invoke-GitIdentityStep -ConfigPath $Cfg -Unattended:$Unattended } catch { Write-StepWarn ('git identity: ' + $_.Exception.Message) }
   Invoke-PreflightStep -Catalog $Catalog -CatalogPath $CatalogPath
   $Failures = @()
   Write-StepSection 'Scoop'
@@ -223,7 +232,7 @@ function Invoke-Setup {
   }
   $Items = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-server'
   if ($Items.Count -gt 0) {
-    try { Invoke-SshServerStep -Items $Items -IsAdmin $IsAdmin } catch { $Failures += ('ssh-server: ' + $_.Exception.Message) }
+    try { Invoke-SshServerStep -Items $Items -IsAdmin $IsAdmin -Answer $SshAnswer } catch { $Failures += ('ssh-server: ' + $_.Exception.Message) }
   }
   $SshItems = Get-SetupSelectedItems -Catalog $Catalog -Step 'ssh-key'
   if ($SshItems.Count -gt 0) {

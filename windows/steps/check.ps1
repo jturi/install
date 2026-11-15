@@ -2,7 +2,8 @@
 # print one "OK <label>", "MISSING <label>" or "SKIPPED <label>" line each.
 # Scoop apps count as installed when scoop\apps\<app>\<version>\scoop-install.json
 # (or install.json, older Scoop) exists; commands must be on PATH. WSL counts
-# only when the Ubuntu distro is installed. An SSH key that
+# only when the Ubuntu distro is installed. The SSH server counts only when
+# sshd runs and its firewall rule is narrowed to the local network. An SSH key that
 # was skipped for lack of a console is SKIPPED, not missing.
 # Puts the number of missing items in -Missing (a [ref]): setup.ps1 reads an
 # int on the pipeline as its exit code. ASCII only, PS 5.1 syntax only.
@@ -40,7 +41,8 @@ function Test-CheckItem {
     'step:flameshot' { return (Test-CheckScoopApp 'flameshot') }
     'step:wezterm' { return ((Test-CheckScoopApp 'wezterm') -and (Test-Path (Join-Path $H '.wezterm.lua'))) }
     'step:wsl' { return (Test-WslUbuntuInstalled) }
-    'step:ssh-server' { return (Test-StepSshdRunning) }
+    # Running is not enough: a rule left open to every network is not done.
+    'step:ssh-server' { return ((Test-StepSshdRunning) -and (Test-StepSshFirewallScoped)) }
     'step:ssh-key' { return ((Find-StepSshKey -HomeDir $HomeDir) -ne '') }
   }
   return $true
