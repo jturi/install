@@ -221,8 +221,12 @@ function Save-Selection {
         Remove-Item -Force $Tmp
         return
       }
-      $Stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-      Copy-Item -Force $Path "$Path.bak.$Stamp"
+      # Next free <path>.bak.<time>[.n]: two saves in one second keep both.
+      $Base = $Path + '.bak.' + (Get-Date -Format 'yyyyMMdd_HHmmss')
+      $Bak = $Base
+      $n = 0
+      while (Test-Path -LiteralPath $Bak) { $n++; $Bak = $Base + '.' + $n }
+      Copy-Item -LiteralPath $Path $Bak
     }
     Move-Item -Force $Tmp $Path
   } catch {

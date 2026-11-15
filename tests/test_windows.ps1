@@ -205,6 +205,34 @@ $global:ScoopLog = @()
 Invoke-ScoopStep -Catalog $T8b -Verify
 Check 'step-scoop-verify-no-install' '0' ([string]$global:ScoopLog.Count)
 
+# Backups taken within the same second never overwrite each other.
+$BkDir = Join-Path $Work 'bk'
+New-Item -ItemType Directory -Path $BkDir -Force | Out-Null
+$BkFile = Join-Path $BkDir 'f.txt'
+Set-Content -Path $BkFile -Value 'one'
+Backup-StepFile $BkFile
+Backup-StepFile $BkFile
+Check 'backup-same-second-kept' '2' ([string]@(Get-ChildItem -Path $BkDir -Filter 'f.txt.bak.*').Count)
+# Install-StepFile writes through a temp file and leaves none behind.
+$InSrc = Join-Path $BkDir 'src.txt'
+Set-Content -Path $InSrc -Value 'new'
+Install-StepFile $InSrc $BkFile | Out-Null
+Check 'install-file-content' 'new' ((Get-Content -Path $BkFile) -join '')
+Check 'install-file-no-temp' '0' ([string]@(Get-ChildItem -Path $BkDir -Filter '*.tmp*').Count)
+
+# Save-Selection: two changes within one second keep two backups.
+$SvCfg = Join-Path $Work 'sv-config'
+$SvCat = Import-Catalog -Path $Fixture
+Save-Selection -Path $SvCfg -Catalog $SvCat
+$SvCat[0].Selected = -not $SvCat[0].Selected
+Save-Selection -Path $SvCfg -Catalog $SvCat
+$SvCat[0].Selected = -not $SvCat[0].Selected
+Save-Selection -Path $SvCfg -Catalog $SvCat
+Check 'save-selection-same-second-backups' '2' ([string]@(Get-ChildItem -Path $Work -Filter 'sv-config.bak.*').Count)
+
+# The token typed at the prompt is zeroed and freed after use.
+Check 'bootstrap-frees-token' 'True' ([string]((Get-Content -Raw (Join-Path $Root 'bootstrap.ps1')) -match 'ZeroFreeBSTR'))
+
 # git first (bucket add needs it), then buckets, then scoop update, then apps.
 # Fresh Scoop root that has only the main bucket, like a new Scoop install.
 $env:SCOOP = Join-Path $Work 'scoop-order'
@@ -536,11 +564,12 @@ function global:Invoke-StepElevated {
   $global:Sshd = New-Object PSObject -Property @{ Status = 'Running'; StartType = 'Automatic' }
   return 0
 }
-# Invoke-CheckStep also checks git and make: stub them so only sshd counts.
-function global:git { }
-function global:make { }
 # The firewall rule counts as scoped unless a test says otherwise.
 function global:Test-StepSshFirewallScoped { $true }
+# The check step also tests for git and make: present on a set-up machine,
+# absent in the Linux container. Stubbed so the SSH counts mean what they say.
+function global:git { }
+function global:make { }
 $SrvRow = New-Object PSObject -Property @{ Action = 'step:ssh-server' }
 Check 'sshd-check-missing' 'False' ([string](Test-CheckItem -Row $SrvRow))
 $SrvPlan = Invoke-SshServerStep -Items @('ssh-server') -Verify | Out-String
@@ -604,7 +633,7 @@ $ParseErr = $null
 Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
 Check 'sshd-script-writes-status' 'True' ([string]($global:ElevLog[-2] -match [regex]::Escape($global:ElevStatus)))
 Check 'sshd-status-file-removed' 'False' ([string](Test-Path -LiteralPath $global:ElevStatus))
-Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped, Function:\git, Function:\make
 . (Join-Path $StepsDir 'sshserver.ps1')
 # Scoped-rule detection on injected objects (no NetSecurity module in a container).
 $FwRule = New-Object PSObject -Property @{ Profile = 'Domain, Private' }
@@ -631,11 +660,12 @@ Check 'sshd-progress-stage' '85' ([string](Get-StepProgressPercent -Stage 85 -St
 Check 'sshd-progress-creeps' 'True' ([string](((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -gt 15) -and ((Get-StepProgressPercent -Stage 15 -StageSeconds 60) -lt (Get-StepProgressPercent -Stage 15 -StageSeconds 180))))
 Check 'sshd-progress-capped' '74' ([string](Get-StepProgressPercent -Stage 15 -StageSeconds 100000))
 # A real child process (not elevated): its stages show up and the exit code
-# comes back. Windows only: it starts powershell.exe -WindowStyle Hidden.
+# comes back. Windows only: it starts powershell.exe with -WindowStyle, which
+# PowerShell on Linux rejects (that used to abort the container run here).
 if ($env:OS -eq 'Windows_NT') {
   $ElevCode = Invoke-StepElevated -Script ("[IO.File]::WriteAllText('" + $StatusFile + "', '50|half'); Start-Sleep -Milliseconds 700; exit 3") -IsAdmin $true -StatusPath $StatusFile -Activity 'test'
   Check 'sshd-elevated-exit-code' '3' ([string]$ElevCode)
-} else { Write-Output 'SKIP sshd-elevated-exit-code: needs Windows' }
+} else { Write-Output 'SKIP sshd-elevated-exit-code: needs Windows PowerShell' }
 
 # WSL: an installed Ubuntu is not installed again (that fails with
 # Wsl/InstallDistro/ERROR_ALREADY_EXISTS).
@@ -819,6 +849,31 @@ $InView = ($Scroll.Cursor -ge $Scroll.Top) -and ($Scroll.Cursor -le ($Scroll.Top
 Check 'menu-cursor-visible' 'True' ([string]$InView)
 $NewRow = New-Object PSObject -Property @{ Label = 'Ghostty'; Selected = $true; New = $true }
 Check 'menu-row-new-marker' 'True' ([string]((Format-MenuRow -Row $NewRow) -match '[(]new[)]'))
+
+# bootstrap.ps1: an existing git clone is used in place (pulled when git is
+# there), never moved aside, and its setup.ps1 runs. Runs the real script in a
+# child PowerShell with a fake home; off Windows a powershell.exe shim stands in.
+$BsHome = Join-Path $Work 'bs-home'
+$BsDir = Join-Path $BsHome 'install'
+New-Item -ItemType Directory -Path (Join-Path $BsDir '.git') -Force | Out-Null
+$BsMarker = Join-Path $BsHome 'setup-ran'
+[IO.File]::WriteAllText((Join-Path $BsDir 'setup.ps1'), ("Set-Content -Path '" + $BsMarker + "' -Value ran`n"))
+$BsSaved = @{}
+foreach ($N in @('USERPROFILE', 'INSTALL_DIR', 'BOOTSTRAP_URL', 'INSTALL_ALLOW_ADMIN', 'GITHUB_TOKEN', 'PATH')) { $BsSaved[$N] = [Environment]::GetEnvironmentVariable($N) }
+$env:USERPROFILE = $BsHome; $env:INSTALL_DIR = $BsDir; $env:INSTALL_ALLOW_ADMIN = '1'
+$env:BOOTSTRAP_URL = 'http://127.0.0.1:9/no-download-expected'; $env:GITHUB_TOKEN = 'x'
+if (-not (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
+  $Shim = Join-Path $Work 'ps-shim'
+  New-Item -ItemType Directory -Path $Shim -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $Shim 'powershell.exe'), "#!/bin/sh`nexec pwsh `"`$@`"`n")
+  & chmod +x (Join-Path $Shim 'powershell.exe')
+  $env:PATH = $Shim + [IO.Path]::PathSeparator + $env:PATH
+}
+$BsOut = & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $Root 'bootstrap.ps1') 2>&1 | Out-String
+foreach ($N in $BsSaved.Keys) { [Environment]::SetEnvironmentVariable($N, $BsSaved[$N]) }
+Check 'bootstrap-clone-not-moved' '0' ([string]@(Get-ChildItem -Path $BsHome -Filter 'install.bak.*').Count)
+Check 'bootstrap-clone-setup-ran' 'True' ([string](Test-Path $BsMarker))
+Check 'bootstrap-clone-no-download' 'False' ([string]($BsOut -match 'downloading'))
 
 if ($Failures -gt 0) {
   Write-Output "$Failures test(s) failed"
