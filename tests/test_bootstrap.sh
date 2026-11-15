@@ -50,6 +50,7 @@ if command -v script >/dev/null 2>&1; then
   tar -czf "${TMP}/stub.tgz" -C "${TMP}/stub" jturi-install-abc
   printf '#!/bin/sh\necho "$@" >"%s/shell-args"\n' "${TMP}" >"${TMP}/fakeshell"
   chmod +x "${TMP}/fakeshell"
+  # shellcheck disable=SC2329 # called through check
   shell_run() {
     HOME="${TMP}/home-shell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x \
       script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >"${TMP}/shell-out" 2>&1
@@ -57,6 +58,7 @@ if command -v script >/dev/null 2>&1; then
   check bootstrap-new-shell-runs shell_run
   check bootstrap-new-shell-interactive grep -qx -- '-i' "${TMP}/shell-args"
   rm -f "${TMP}/shell-args"
+  # shellcheck disable=SC2329 # called through check
   no_shell_run() {
     HOME="${TMP}/home-noshell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x BOOTSTRAP_NO_SHELL=1 \
       script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >/dev/null 2>&1
