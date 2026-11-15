@@ -43,7 +43,7 @@ function Get-StepGitGlobal($Key) {
 }
 
 function Invoke-GitIdentityStep {
-  param([string]$ConfigPath = '', [string]$User = '', [string]$Email = '', [switch]$Verify, [switch]$NoPrompt, [object]$Interactive = $null)
+  param([string]$ConfigPath = '', [string]$User = '', [string]$Email = '', [switch]$Verify, [switch]$NoPrompt, [switch]$Unattended, [object]$Interactive = $null)
   $UserGiven = ($User -ne '')
   $EmailGiven = ($Email -ne '')
   # Default: the saved config value, else git's global setting.
@@ -58,7 +58,8 @@ function Invoke-GitIdentityStep {
   }
 
   # NoPrompt: only apply what is saved (the second call, once git is installed).
-  $CanAsk = (-not $NoPrompt) -and (Test-StepSshConsole -Interactive $Interactive)
+  # Unattended (setup -Yes): use what is saved and ask nothing, but still warn.
+  $CanAsk = (-not $NoPrompt) -and (-not $Unattended) -and (Test-StepSshConsole -Interactive $Interactive)
   if ($CanAsk) {
     if (-not $UserGiven) {
       if ($User -ne '') { $User = Read-StepKeep 'GitHub username' $User }
@@ -70,7 +71,8 @@ function Invoke-GitIdentityStep {
     }
   }
   elseif (-not $NoPrompt -and ($User -eq '' -or $Email -eq '')) {
-    Write-StepWarn 'GitHub username or email not set: run setup from a console to enter them'
+    if ($Unattended) { Write-StepWarn 'GitHub username or email not set: run setup without -Yes to enter them' }
+    else { Write-StepWarn 'GitHub username or email not set: run setup from a console to enter them' }
   }
 
   # Save every value, even an empty email, so the next run reads it back.

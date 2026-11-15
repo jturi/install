@@ -179,7 +179,11 @@ function Invoke-SshServerStep {
   if (-not (Test-StepAdmin -IsAdmin $IsAdmin)) {
     if (-not (Read-StepSshServerConfirm -Answer $Answer)) {
       $script:StepSshServerSkip = 'not confirmed'
-      Write-StepWarn 'skipped OpenSSH server: it needs administrator rights (run setup again and answer y)'
+      if (Test-StepSshdRunning) {
+        Write-StepWarn 'sshd is running, but its firewall rule is not limited to the local network on Private and Domain networks: run setup again and answer y to narrow it'
+      } else {
+        Write-StepWarn 'skipped OpenSSH server: it needs administrator rights (run setup again and answer y)'
+      }
       return
     }
   }
