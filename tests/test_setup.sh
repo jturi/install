@@ -59,7 +59,7 @@ check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
-check macos-package-list "tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
+check macos-package-list "bash make tmux vim nano bash-completion@2 htop git wget rsync tree jq" "$(read_packages macos | xargs)"
 
 printf '%s\n' '# comment' '' 'tmux' 'vim  # editor' >"${WORK}/pkgs.txt"
 check package-list "tmux vim-enhanced" "$(PACKAGE_LIST="${WORK}/pkgs.txt" read_packages fedora | xargs)"

@@ -57,10 +57,14 @@ package manager:
   `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`.
   It asks for your password and installs the Xcode Command Line Tools.
   With `--yes` it sets `NONINTERACTIVE=1`.
-- After the install it adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`.
+- It adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`, also when
+  brew is already on PATH: macOS's `/etc/paths.d` puts Homebrew after `/bin`,
+  so without it new shells get the system bash 3.2 and make 3.81.
 - macOS already has less, curl, ssh, lsof, file, tar, zip and the other base
-  tools, so brew installs only: tmux, vim, nano, bash-completion@2, htop, git,
-  wget, rsync, tree, jq.
+  tools, so brew installs only: bash, make, tmux, vim, nano, bash-completion@2,
+  htop, git, wget, rsync, tree, jq.
+- `~/.zshrc` puts Homebrew's GNU make (`<prefix>/opt/make/libexec/gnubin`)
+  ahead of the system make, so `make` is make 4.
 - `~/.nanorc` points at Homebrew's nano syntax files (`<prefix>/share/nano`).
 - `--ssh-server` turns on Remote Login (`systemsetup -setremotelogin on`).
   Newer macOS can block this without Full Disk Access; then use

@@ -5,7 +5,21 @@
 # feature checks.
 
 # --- navigation ---
-alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
+# ref: reload everything (profile, rc, aliases, PATH) by starting a fresh login
+# shell of the same kind. Sourcing the rc again would add each PATH line twice
+# and skip ~/.zprofile / ~/.bash_profile (where Homebrew's PATH is set).
+unalias ref 2>/dev/null
+ref() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        fc -AI 2>/dev/null # keep this session's history
+        echo "Reloading zsh (login shell)"
+        exec zsh -l
+    else
+        history -a
+        echo "Reloading bash (login shell)"
+        exec bash -l
+    fi
+}
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
 alias cd1='cd ..'

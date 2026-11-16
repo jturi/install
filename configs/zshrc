@@ -99,3 +99,8 @@ fi
 if [ -f ~/.bash_extras ]; then
     source ~/.bash_extras
 fi
+
+# GNU make 4 from Homebrew ahead of macOS's make 3.81 (some Makefiles need 4+).
+if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/make/libexec/gnubin" ]; then
+    export PATH="$(brew --prefix)/opt/make/libexec/gnubin:$PATH"
+fi

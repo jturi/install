@@ -4,6 +4,8 @@
 
 # shell / editors / terminal
 zsh
+bash
+make
 tmux
 vim
 nano

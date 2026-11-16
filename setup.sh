@@ -243,14 +243,19 @@ ensure_brew() {
     ((ASSUME_YES)) && export NONINTERACTIVE=1
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
-  if ! command -v brew >/dev/null 2>&1 && [[ -x "${brew_bin}" ]]; then
-    eval "$("${brew_bin}" shellenv)"
-    local line="eval \"\$(${brew_bin} shellenv)\""
-    if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
-      info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
-      backup_file "${TARGET_HOME}/.zprofile"
-      printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
+  [[ -x "${brew_bin}" ]] || return 0
+  command -v brew >/dev/null 2>&1 || eval "$("${brew_bin}" shellenv)"
+  # Always, even when brew is already on PATH: /etc/paths.d puts Homebrew after
+  # /bin, so without this line macOS's bash 3.2 and make 3.81 win in new shells.
+  local line="eval \"\$(${brew_bin} shellenv)\""
+  if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
+    info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
+    if ((DRY_RUN)); then
+      printf '   [dry-run] append to %s: %s\n' "${TARGET_HOME}/.zprofile" "${line}"
+      return 0
     fi
+    backup_file "${TARGET_HOME}/.zprofile"
+    printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
   fi
 }
 
