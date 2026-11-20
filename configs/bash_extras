@@ -397,7 +397,7 @@ ghashc() { local h; h="$(git rev-parse --short HEAD)" && printf '%s' "$h" | _cli
 # replaced on the next run (the old one is kept as .bak.<time>); for lasting
 # changes edit configs/ in the install repo. ~/.bash_aliases is yours: setup
 # then installs its own copy as ~/.bash_aliases2.
-unalias _edit ebashrc ezshrc ebashprofile ezprofile ealiases etmux essh egitconfig egit enano evim einputrc eenv ehosts ekitty eghostty 2>/dev/null || true # a same-name alias breaks the function definitions below
+unalias _edit ebashrc ezshrc ebashprofile ezprofile ealiases etmux essh eknown ecrontab egitconfig egit enano evim einputrc eenv ehosts ekitty eghostty 2>/dev/null || true # a same-name alias breaks the function definitions below
 _edit() { "${EDITOR:-nano}" "$@"; }
 ebashrc() { _edit ~/.bashrc && echo "run ref to reload"; }
 ezshrc() { _edit ~/.zshrc && echo "run ref to reload"; }
@@ -417,6 +417,10 @@ essh() {
   [ -f ~/.ssh/config ] || { : >~/.ssh/config && chmod 600 ~/.ssh/config; }
   _edit ~/.ssh/config
 }
+# eknown: ~/.ssh/known_hosts (remove a stale host key line).
+eknown() { _edit ~/.ssh/known_hosts; }
+# ecrontab: your crontab in the same editor; cron installs it on save.
+ecrontab() { _need crontab || return; local ed="${EDITOR:-nano}"; EDITOR="$ed" VISUAL="$ed" crontab -e; }
 egitconfig() { _edit ~/.gitconfig; }
 # egit: this repository's .git/config.
 egit() { local g; g="$(git rev-parse --git-dir)" || return; _edit "$g/config"; }

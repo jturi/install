@@ -548,6 +548,7 @@ function Edit-SshConfig  {
     if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
     Invoke-UserEditor (Join-Path $Dir 'config')
 }
+function Edit-KnownHosts { Invoke-UserEditor (Join-Path (Join-Path $HOME '.ssh') 'known_hosts') }
 function Edit-GitConfig  { Invoke-UserEditor (Join-Path $HOME '.gitconfig') }
 function Edit-RepoGitConfig { $G = (git rev-parse --git-dir); if ($G) { Invoke-UserEditor (Join-Path $G 'config') } }
 function Edit-WeztermConfig { Invoke-UserEditor (Join-Path $HOME '.wezterm.lua') }
@@ -556,6 +557,7 @@ function Edit-Hotkeys    { Invoke-UserEditor (Join-Path (Join-Path $HOME 'hotkey
 function Edit-Hosts      { Start-Process notepad -Verb RunAs -ArgumentList (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') }
 Set-UserAlias 'eprofile'   'Edit-Profile'
 Set-UserAlias 'essh'       'Edit-SshConfig'
+Set-UserAlias 'eknown'     'Edit-KnownHosts'
 Set-UserAlias 'egitconfig' 'Edit-GitConfig'
 Set-UserAlias 'egit'       'Edit-RepoGitConfig'
 Set-UserAlias 'ewezterm'   'Edit-WeztermConfig'

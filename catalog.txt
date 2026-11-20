@@ -60,7 +60,7 @@ aliases|network|Network and downloads (myip, down, serve)|linux,macos|on|step:co
 aliases|files|Files and archives (md, extract)|linux,macos|on|step:configs
 aliases|search|History search (hgrep)|linux,macos|on|step:configs
 aliases|clipboard|Copy to clipboard (pwdc, catc, clip, lastc, sshpubc)|linux,macos|on|step:configs
-aliases|edit|Edit configs in nano (ebashrc, ezshrc, etmux, essh, eenv)|linux,macos|on|step:configs
+aliases|edit|Edit configs in nano (ebashrc, etmux, essh, eknown, ecrontab)|linux,macos|on|step:configs
 aliases|docker|Docker and Compose (dps, dcu, dlog, dexec)|linux,macos|on|step:configs
 aliases|kubectl|kubectl (k, kgp, kl, kd, kdel)|linux,macos|off|step:configs
 aliases|github|GitHub CLI (ghpc, ghco, ghck)|linux,macos|off|step:configs
