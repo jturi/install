@@ -143,7 +143,7 @@ ah="${WORK}/alias_home"
 mkdir -p "${ah}"
 TARGET_HOME="${ah}" install_aliases >/dev/null
 check aliases-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah}/.bash_aliases" && echo same)"
-check extras-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah}/.bash_extras" && echo same)"
+check extras-created "same" "$(cmp -s <(filter_alias_groups "${ROOT}/configs/bash_extras") "${ah}/.bash_extras" && echo same)"
 check origin-created "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah}/.bash_show_origin" && echo same)"
 check aliases2-not-created "" "$(ls "${ah}/.bash_aliases2" 2>/dev/null)"
 check loader-in-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
@@ -155,6 +155,37 @@ check origin-loader-not-duplicated "1" "$(grep -c 'source ~/.bash_show_origin' "
 check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
 # Loader sources every file in order: extras before origin (origin hooks the prompt, so it loads last).
 check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
+
+# Alias groups: only ticked groups reach ~/.bash_extras; lines outside a group
+# (ref, alg, _need) always do. Defaults: docker on, kubectl and github off.
+gh_home="${WORK}/group_home"
+mkdir -p "${gh_home}"
+printf 'aliases.docker=0\naliases.github=1\n' >"${WORK}/groups.cfg"
+( TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/groups.cfg"; install_aliases arch >/dev/null )
+check groups-git-kept "1" "$(grep -cx '# @group git' "${gh_home}/.bash_extras")"
+check groups-docker-dropped "0" "$(grep -c 'dps()' "${gh_home}/.bash_extras")"
+check groups-kubectl-default-off "0" "$(grep -c '^k()' "${gh_home}/.bash_extras")"
+check groups-github-on "1" "$(grep -c '^ghpc()' "${gh_home}/.bash_extras")"
+check groups-always-kept "3" "$(grep -cE '^(ref|alg|_need)\(\)' "${gh_home}/.bash_extras")"
+check groups-balanced "0" "$(awk '/^# @group /{o++} /^# @end/{o--} END{print o}' "${gh_home}/.bash_extras")"
+check groups-parse "ok" "$(bash -n "${gh_home}/.bash_extras" && echo ok)"
+check groups-check-ok "OK" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/groups.cfg"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.git ]] || check_item arch "${i}"; done)"
+check groups-check-missing "MISSING" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.docker ]] || check_item arch "${i}"; done)"
+printf 'configs.aliases=0\n' >"${WORK}/noaliases.cfg"
+check groups-check-needs-aliases "SKIPPED needs Shell aliases (configs)" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/noaliases.cfg"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.git ]] || check_item arch "${i}"; done)"
+# Every group in bash_extras has a catalog item, and every catalog item a group.
+check groups-match-catalog "same" "$(diff <(grep -o '^# @group [a-z-]*' "${ROOT}/configs/bash_extras" | cut -d' ' -f3 | sort) <(grep '^aliases|' "${ROOT}/catalog.txt" | grep -v windows | cut -d'|' -f2 | sort) >/dev/null && echo same)"
+# refa: make install in $INSTALL_DIR, then ref; a failed install skips ref.
+ra="${WORK}/refa_repo"
+mkdir -p "${ra}" && touch "${ra}/setup.sh"
+printf 'install:\n\t@echo installed\n' >"${ra}/Makefile"
+check refa-runs "installed reloaded" "$(INSTALL_DIR="${ra}" HOME="${WORK}/refa_home" bash -c 'source "$0"; ref() { echo reloaded; }; refa' "${ROOT}/configs/bash_extras" 2>/dev/null | grep -v '^refa:' | xargs)"
+printf 'install:\n\t@false\n' >"${ra}/Makefile"
+check refa-fail-no-reload "1" "$(INSTALL_DIR="${ra}" HOME="${WORK}/refa_home" bash -c 'source "$0"; ref() { echo reloaded; }; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
+check refa-no-repo "1" "$(INSTALL_DIR="" HOME="${WORK}/refa_home" bash -c 'source "$0"; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
+
+# The docker helpers say what is missing instead of `command not found`.
+check groups-need-docker "127" "$(bash -c 'source "$0"; PATH=/nonexistent; dps >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 
 # Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
 # on macOS (login shells) an existing ~/.bash_profile gets the loader (backed
@@ -170,7 +201,7 @@ check loader-in-profile "1" "$(grep -c 'source ~/.bash_aliases2' "${ah2}/.bash_p
 check profile-backup "# profile" "$(cat "${ah2}"/.bash_profile.bak.*)"
 check bashrc-untouched "" "$(ls "${ah2}/.bashrc" 2>/dev/null)"
 check loader-works "mine" "$(HOME="${ah2}" bash -c 'shopt -s expand_aliases; source ~/.bash_profile; alias mine >/dev/null && echo mine')"
-check extras2-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah2}/.bash_extras" && echo same)"
+check extras2-created "same" "$(cmp -s <(filter_alias_groups "${ROOT}/configs/bash_extras") "${ah2}/.bash_extras" && echo same)"
 check zshrc-loads-aliases "1" "$(grep -c 'source ~/.bash_aliases2' "${ROOT}/configs/zshrc")"
 check zshrc-loads-extras "1" "$(grep -c 'source ~/.bash_extras' "${ROOT}/configs/zshrc")"
 check zshrc-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ROOT}/configs/zshrc")"

@@ -31,6 +31,7 @@ function Set-UserAlias {
     param([string]$Name, $Value)
     Set-Alias -Name $Name -Value $Value -Scope Global -Option AllScope -Force
 }
+# @group nav
 # -------------------------------------------------------------------------
 #  NAVIGATION
 # -------------------------------------------------------------------------
@@ -121,6 +122,9 @@ Set-UserAlias 'lt'   'Get-ChildItemLast10'
 Set-UserAlias 'dud'  'Get-DirSize'
 Set-UserAlias 'alg'  'Search-Aliases'
 
+# @end
+
+# @group search
 # -------------------------------------------------------------------------
 #  SEARCH
 # -------------------------------------------------------------------------
@@ -135,6 +139,9 @@ Set-UserAlias 'h'      'Get-History'
 Set-UserAlias 'hgrep'  'Get-HistoryGrep'
 Set-UserAlias 'sortnr' 'Sort-NumericDesc'
 
+# @end
+
+# @group system
 # -------------------------------------------------------------------------
 #  SYSTEM
 # -------------------------------------------------------------------------
@@ -199,6 +206,9 @@ Set-UserAlias 'help'      'Get-Help'
 Set-UserAlias 'p'         'Get-Process'
 Set-UserAlias 'week'      'Get-WeekNumber'
 
+# @end
+
+# @group network
 # -------------------------------------------------------------------------
 #  NETWORK
 # -------------------------------------------------------------------------
@@ -237,6 +247,9 @@ if (Get-Command tailscale -ErrorAction SilentlyContinue) {
     }
 }
 
+# @end
+
+# @group system
 # -------------------------------------------------------------------------
 #  PROCESSES
 # -------------------------------------------------------------------------
@@ -256,6 +269,9 @@ Set-UserAlias 'pscpu'    'Get-TopCpu'
 Set-UserAlias 'killport' 'Stop-ProcessOnPort'
 Set-UserAlias 'mytop'    'Get-TopCpu'
 
+# @end
+
+# @group tools
 # -------------------------------------------------------------------------
 #  MISC CLI TOOL WRAPPERS (only active if the tool is installed)
 # -------------------------------------------------------------------------
@@ -270,6 +286,9 @@ if (Get-Command bat -ErrorAction SilentlyContinue) {
     Set-UserAlias 'B' 'Invoke-BatPlain'
 }
 
+# @end
+
+# @group dev
 # -------------------------------------------------------------------------
 #  NPM
 # -------------------------------------------------------------------------
@@ -332,6 +351,9 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
     function cup { cargo install-update -a }
 }
 
+# @end
+
+# @group docker
 # -------------------------------------------------------------------------
 #  DOCKER
 # -------------------------------------------------------------------------
@@ -352,6 +374,9 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
     function dcr { docker compose restart @args }
 }
 
+# @end
+
+# @group terraform
 # -------------------------------------------------------------------------
 #  TERRAFORM
 # -------------------------------------------------------------------------
@@ -412,6 +437,9 @@ if (Get-Command terraform -ErrorAction SilentlyContinue) {
     Set-UserAlias 'tf' 'terraform'
 }
 
+# @end
+
+# @group kubectl
 # -------------------------------------------------------------------------
 #  KUBECTL (generic only - no company-specific resource names)
 # -------------------------------------------------------------------------
@@ -436,6 +464,9 @@ if (Get-Command kubectl -ErrorAction SilentlyContinue) {
     function ktail   { kubectl logs -f --tail=50 @args }
 }
 
+# @end
+
+# @group tools
 # -------------------------------------------------------------------------
 #  CHEZMOI
 # -------------------------------------------------------------------------
@@ -445,6 +476,9 @@ if (Get-Command chezmoi -ErrorAction SilentlyContinue) {
     Set-UserAlias 'ch' 'chezmoi'
 }
 
+# @end
+
+# @group ai
 # -------------------------------------------------------------------------
 #  AI CLI SHORTCUTS (only if the tool is installed)
 # -------------------------------------------------------------------------
@@ -455,6 +489,8 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
     function opencodeyolo { $env:OPENCODE_PERMISSION = '{"*":"allow"}'; opencode @args }
 }
 
+# @end
+
 # -------------------------------------------------------------------------
 #  CLIPBOARD / PROFILE BONUS UTILS
 # -------------------------------------------------------------------------
@@ -463,6 +499,7 @@ function Edit-Profile { if (Get-Command code -ErrorAction SilentlyContinue) { co
 Set-UserAlias 'pwdc'     'Copy-Pwd'
 Set-UserAlias 'eprofile' 'Edit-Profile'
 
+# @group git
 # -------------------------------------------------------------------------
 #  GIT - navigation / status / branch
 # -------------------------------------------------------------------------
@@ -767,6 +804,9 @@ Set-UserAlias 'gp' 'GitPush'
 Set-UserAlias 'gl' 'GitLogPretty'
 Set-UserAlias 'gd' 'GitDiff'
 
+# @end
+
+# @group system
 # -------------------------------------------------------------------------
 #  ENVIRONMENT
 # -------------------------------------------------------------------------
@@ -1033,6 +1073,9 @@ function Remove-HistoryItem {
 
 Set-Alias -Name delhistory -Value Remove-HistoryItem
 
+# @end
+
+# @group nav
 # -------------------------------------------------------------------------
 #  DIRECTORY JUMPS - quick cd to common paths
 # -------------------------------------------------------------------------
@@ -1048,6 +1091,8 @@ Set-UserAlias 'jdp' 'cdDesktop'
 Set-UserAlias 'jdl' 'cdDownloads'
 Set-UserAlias 'jt'  'cdTemp'
 
+# @end
+
 # -------------------------------------------------------------------------
 #  POSIX CLI ALIASES
 # -------------------------------------------------------------------------
@@ -1062,6 +1107,7 @@ function MkDirP {
 }
 Set-UserAlias 'mkdirp' 'MkDirP'
 
+# @group dev
 # -------------------------------------------------------------------------
 #  NPM / YARN - additional shortcuts
 # -------------------------------------------------------------------------
@@ -1072,7 +1118,11 @@ if (Get-Command yarn -ErrorAction SilentlyContinue) {
     Set-UserAlias 'yn' 'yarn'
 }
 
+# @end
+
+# @group search
 # -------------------------------------------------------------------------
 #  HISTORY - bash-like history access
 # -------------------------------------------------------------------------
 Set-UserAlias 'history' 'Get-History'
+# @end

@@ -962,10 +962,27 @@ bash_rc_file() {
   fi
 }
 
+# Print alias file $1 with only the ticked alias groups: a block from
+# `# @group <name>` to `# @end` is kept when aliases.<name> is selected.
+# Lines outside any block are always kept; so are the marker lines of a kept
+# block, which check_item looks for.
+filter_alias_groups() {
+  local src="$1" keep=" " i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_GROUP[i]}" == "aliases" ]] || continue
+    if item_selected "aliases.${CAT_ITEM[i]}"; then keep="${keep}${CAT_ITEM[i]} "; fi
+  done
+  awk -v keep="${keep}" '
+    /^# @group [A-Za-z0-9_-]+[[:space:]]*$/ { g = $3; drop = (index(keep, " " g " ") == 0) }
+    !drop { print }
+    /^# @end[[:space:]]*$/ { drop = 0 }
+  ' "${src}"
+}
+
 # Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
 # the user already has their own ~/.bash_aliases. Then make bash load all
-# alias files. configs/bash_extras and configs/bash_show_origin always install
-# as ~/.bash_extras and ~/.bash_show_origin.
+# alias files. configs/bash_extras installs as ~/.bash_extras with only the
+# ticked alias groups; configs/bash_show_origin as ~/.bash_show_origin.
 install_aliases() {
   local family="${1:-}"
   local src="${SCRIPT_DIR}/configs/bash_aliases"
@@ -977,7 +994,11 @@ install_aliases() {
     dst="${TARGET_HOME}/.bash_aliases2"
   fi
   install_file "${src}" "${dst}"
-  install_file "${extra_src}" "${TARGET_HOME}/.bash_extras"
+  local extra_tmp
+  extra_tmp="$(mktemp)"
+  filter_alias_groups "${extra_src}" >"${extra_tmp}"
+  install_file "${extra_tmp}" "${TARGET_HOME}/.bash_extras"
+  rm -f "${extra_tmp}"
   install_file "${origin_src}" "${TARGET_HOME}/.bash_show_origin"
 
   local rc
@@ -1216,6 +1237,11 @@ check_item() {
       if [[ -f "${h}/.bash_extras" && -f "${h}/.bash_show_origin" ]] &&
         [[ -f "${h}/.bash_aliases" || -f "${h}/.bash_aliases2" ]] &&
         grep -qsF 'source ~/.bash_extras' "${rc}"; then echo OK; else echo MISSING; fi
+      ;;
+    aliases.*)
+      if ! item_selected configs.aliases; then echo "SKIPPED needs Shell aliases (configs)"
+      elif grep -qsxF "# @group ${CAT_ITEM[i]}" "${h}/.bash_extras"; then echo OK
+      else echo MISSING; fi
       ;;
     configs.bin)
       for f in "${SCRIPT_DIR}"/configs/bin/*; do
