@@ -13,7 +13,9 @@
 # ref: reload everything (profile, rc, aliases, PATH) by starting a fresh login
 # shell of the same kind. Sourcing the rc again would add each PATH line twice
 # and skip ~/.zprofile / ~/.bash_profile (where Homebrew's PATH is set).
-unalias ref 2>/dev/null
+# A same-name alias (e.g. from ~/.bash_aliases) would make each function
+# definition below a parse error, so drop it first.
+unalias ref refa alg _need 2>/dev/null || true
 ref() {
     if [ -n "${ZSH_VERSION:-}" ]; then
         fc -AI 2>/dev/null # keep this session's history
@@ -57,6 +59,7 @@ alg() {
 _need() { command -v "$1" >/dev/null 2>&1 || { echo "$1 is not installed" >&2; return 127; }; }
 
 # @group nav
+unalias up mkcd lt ltt 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- navigation and listing ---
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
@@ -115,6 +118,7 @@ ltt() {
 # @end
 
 # @group tmux
+unalias tm tmuxhelp 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- tmux ---
 
 alias ta='tmux attach || tmux new'
@@ -151,6 +155,7 @@ tmuxhelp() {
 # @end
 
 # @group git
+unalias glast 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- git status/diff ---
 alias gs='git status'
 alias gst='git status'
@@ -214,6 +219,7 @@ alias gtrack='git branch --set-upstream-to=origin/$(git rev-parse --abbrev-ref H
 # @end
 
 # @group system
+unalias again psg killport duh 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- sudo/processes ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
 # again: rerun the previous command as root (fc is POSIX; works in bash+zsh,
@@ -267,6 +273,7 @@ duh() {
 # @end
 
 # @group network
+unalias down serve 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- network/download ---
 # myip: public IP (curl ships on both; matches dotfiles myip).
 alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
@@ -287,6 +294,7 @@ alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
 # @end
 
 # @group files
+unalias extract 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- files/archives ---
 alias md='mkdir -p'
 # extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
@@ -304,12 +312,14 @@ extract() {
 # @end
 
 # @group search
+unalias hgrep 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- search ---
 # hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
 # @end
 
 # @group docker
+unalias d dc dcu dcd dcr dcl dps dpsa dport di dlog dexec dmounts dprune 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- docker and compose ---
 # Functions, not aliases: without docker they say so (exit 127) instead of
 # `command not found`, and they take extra arguments.
@@ -346,6 +356,7 @@ dprune() {
 # @end
 
 # @group kubectl
+unalias k kgp kgs kgd kga kl kd kctx kns 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- kubectl (generic; no cluster-specific names) ---
 k() { _need kubectl || return; command kubectl "$@"; }
 kgp() { k get pods "$@"; }
@@ -363,6 +374,7 @@ kns() {
 # @end
 
 # @group github
+unalias gh_ ghpc ghpv ghpd ghco ghck ghst ghweb 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- GitHub CLI (gh) ---
 gh_() { _need gh || return; command gh "$@"; }
 ghpc() { gh_ pr create --fill "$@"; }   # PR from the current branch

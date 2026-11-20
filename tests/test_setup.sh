@@ -184,6 +184,9 @@ printf 'install:\n\t@false\n' >"${ra}/Makefile"
 check refa-fail-no-reload "1" "$(INSTALL_DIR="${ra}" HOME="${WORK}/refa_home" bash -c 'source "$0"; ref() { echo reloaded; }; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 check refa-no-repo "1" "$(INSTALL_DIR="" HOME="${WORK}/refa_home" bash -c 'source "$0"; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 
+# A same-name alias loaded earlier (~/.bash_aliases) must not break the
+# function definitions: every function in bash_extras is unaliased first.
+check extras-survive-user-aliases "function function function" "$(bash -c 'shopt -s expand_aliases; for n in $(grep -oE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$0" | tr -d "()"); do alias "$n=true"; done; source "$0" && type -t dps up refa | xargs' "${ROOT}/configs/bash_extras" 2>&1)"
 # The docker helpers say what is missing instead of `command not found`.
 check groups-need-docker "127" "$(bash -c 'source "$0"; PATH=/nonexistent; dps >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 
