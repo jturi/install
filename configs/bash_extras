@@ -330,6 +330,114 @@ unalias hgrep 2>/dev/null || true # a same-name alias breaks the function defini
 hgrep() { history | grep -i -- "$@"; }
 # @end
 
+# @group clipboard
+# --- copy to the clipboard ---
+unalias _clip pwdc catc clip clipp lastc sshpubc gbrc ghashc 2>/dev/null || true # a same-name alias breaks the function definitions below
+# _clip: stdin to the system clipboard. macOS pbcopy, Wayland wl-copy, X11
+# xclip/xsel, WSL clip.exe, then tmux's buffer (-w also sets the terminal
+# clipboard), then OSC 52 (works over SSH in most terminals).
+_clip() {
+  local t
+  t="$(cat)"
+  if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$t" | pbcopy && return
+  elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then printf '%s' "$t" | wl-copy && return
+  elif [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then printf '%s' "$t" | xclip -selection clipboard -in && return
+  elif [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then printf '%s' "$t" | xsel --clipboard --input && return
+  elif command -v clip.exe >/dev/null 2>&1; then printf '%s' "$t" | clip.exe && return
+  fi
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then tmux set-buffer -w -- "$t" && return; fi
+  if [ -t 2 ]; then printf '\033]52;c;%s\a' "$(printf '%s' "$t" | base64 | tr -d '\n')" >&2 && return; fi
+  echo "no clipboard found (pbcopy, wl-copy, xclip, xsel, clip.exe, tmux)" >&2
+  return 1
+}
+# pwdc: copy the current directory's path.
+pwdc() { printf '%s' "$PWD" | _clip && echo "copied: $PWD"; }
+# catc <file>: copy a file's contents (no file: stdin).
+catc() {
+  if [ $# -eq 0 ]; then _clip; return; fi
+  [ -f "$1" ] || { echo "catc: not a file: $1" >&2; return 1; }
+  _clip <"$1" && echo "copied: $1 ($(wc -l <"$1" | tr -d ' ') lines)"
+}
+# clip [text...]: copy the arguments, or stdin (`cmd | clip`).
+clip() { if [ $# -gt 0 ]; then printf '%s' "$*" | _clip; else _clip; fi; }
+# clipp: print the clipboard.
+clipp() {
+  if command -v pbpaste >/dev/null 2>&1; then pbpaste
+  elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null 2>&1; then wl-paste
+  elif [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then xclip -selection clipboard -out
+  elif [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then xsel --clipboard --output
+  elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command Get-Clipboard | tr -d '\r'
+  elif [ -n "${TMUX:-}" ]; then tmux show-buffer
+  else echo "clipp: no clipboard reader found" >&2; return 1; fi
+}
+# lastc: copy the previous command line.
+lastc() {
+  local c
+  c="$(fc -ln -1)"
+  c="${c#"${c%%[![:space:]]*}"}"
+  printf '%s' "$c" | _clip && echo "copied: $c"
+}
+# sshpubc: copy your SSH public key (to paste into GitHub, a server, ...).
+sshpubc() {
+  local k
+  for k in ~/.ssh/id_ed25519.pub ~/.ssh/id_ecdsa.pub ~/.ssh/id_rsa.pub; do
+    [ -f "$k" ] && { _clip <"$k" && echo "copied: $k"; return; }
+  done
+  echo "sshpubc: no public key in ~/.ssh" >&2
+  return 1
+}
+# gbrc / ghashc: copy the current git branch / short commit hash.
+gbrc() { local b; b="$(git branch --show-current)" && [ -n "$b" ] && printf '%s' "$b" | _clip && echo "copied: $b"; }
+ghashc() { local h; h="$(git rev-parse --short HEAD)" && printf '%s' "$h" | _clip && echo "copied: $h"; }
+# @end
+
+# @group edit
+# --- edit config files in $EDITOR (default nano) ---
+# Files that setup installs (tmux.conf, zshrc, nanorc, kitty, Ghostty) are
+# replaced on the next run (the old one is kept as .bak.<time>); for lasting
+# changes edit configs/ in the install repo. ~/.bash_aliases is yours: setup
+# then installs its own copy as ~/.bash_aliases2.
+unalias _edit ebashrc ezshrc ebashprofile ezprofile ealiases etmux essh egitconfig egit enano evim einputrc eenv ehosts ekitty eghostty 2>/dev/null || true # a same-name alias breaks the function definitions below
+_edit() { "${EDITOR:-nano}" "$@"; }
+ebashrc() { _edit ~/.bashrc && echo "run ref to reload"; }
+ezshrc() { _edit ~/.zshrc && echo "run ref to reload"; }
+ebashprofile() { _edit ~/.bash_profile && echo "run ref to reload"; }
+ezprofile() { _edit ~/.zprofile && echo "run ref to reload"; }
+ealiases() { _edit ~/.bash_aliases && echo "run ref to reload"; }
+# etmux: edit ~/.tmux.conf, then reload it in a running tmux server.
+etmux() {
+  _edit ~/.tmux.conf || return
+  if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1; then
+    tmux source-file ~/.tmux.conf && echo "reloaded ~/.tmux.conf"
+  fi
+}
+# essh: edit ~/.ssh/config; creates it private (700 dir, 600 file).
+essh() {
+  [ -d ~/.ssh ] || mkdir -m 700 ~/.ssh
+  [ -f ~/.ssh/config ] || { : >~/.ssh/config && chmod 600 ~/.ssh/config; }
+  _edit ~/.ssh/config
+}
+egitconfig() { _edit ~/.gitconfig; }
+# egit: this repository's .git/config.
+egit() { local g; g="$(git rev-parse --git-dir)" || return; _edit "$g/config"; }
+enano() { _edit ~/.nanorc; }
+evim() { _edit ~/.vimrc; }
+einputrc() { _edit ~/.inputrc; }
+# eenv: edit ~/.env and keep it readable by you only (600).
+eenv() {
+  [ -f ~/.env ] || { : >~/.env && chmod 600 ~/.env; }
+  _edit ~/.env || return
+  chmod 600 ~/.env
+}
+# ehosts: edit /etc/hosts as root (sudoedit: your editor, root writes the file).
+ehosts() { SUDO_EDITOR="${EDITOR:-nano}" sudo -e /etc/hosts; }
+ekitty() { _edit ~/.config/kitty/kitty.conf; }
+eghostty() {
+  if [ "$(uname -s)" = Darwin ]; then _edit "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  else _edit ~/.config/ghostty/config; fi
+}
+# @end
+
 # @group docker
 unalias d dc dcu dcd dcr dcl dps dpsa dport di dlog dexec dmounts dprune 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- docker and compose ---

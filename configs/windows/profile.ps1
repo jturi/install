@@ -492,13 +492,76 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
 
 # @end
 
+# @group clipboard
 # -------------------------------------------------------------------------
-#  CLIPBOARD / PROFILE BONUS UTILS
+#  CLIPBOARD - copy paths, files, commands and keys
 # -------------------------------------------------------------------------
-function Copy-Pwd    { (Get-Location).Path | Set-Clipboard }
-function Edit-Profile { if (Get-Command code -ErrorAction SilentlyContinue) { code $PROFILE } else { notepad $PROFILE } }
-Set-UserAlias 'pwdc'     'Copy-Pwd'
-Set-UserAlias 'eprofile' 'Edit-Profile'
+function Copy-Pwd { $P = (Get-Location).Path; $P | Set-Clipboard; Write-Host ('copied: ' + $P) }
+# catc <file>: copy a file's contents (no file: pipeline input).
+function Copy-FileContent {
+    param([string]$Path = '')
+    if ($Path -eq '') { $input | Out-String | Set-Clipboard; return }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Write-Host ('catc: not a file: ' + $Path) -ForegroundColor Red; return }
+    Get-Content -LiteralPath $Path -Raw | Set-Clipboard
+    Write-Host ('copied: ' + $Path)
+}
+function Get-ClipboardText { Get-Clipboard }
+# lastc: copy the previous command line.
+function Copy-LastCommand {
+    $Last = Get-History -Count 1
+    if (-not $Last) { Write-Host 'lastc: no history yet' -ForegroundColor Yellow; return }
+    $Last.CommandLine | Set-Clipboard
+    Write-Host ('copied: ' + $Last.CommandLine)
+}
+# sshpubc: copy your SSH public key (to paste into GitHub, a server, ...).
+function Copy-SshPublicKey {
+    foreach ($Name in @('id_ed25519.pub', 'id_ecdsa.pub', 'id_rsa.pub')) {
+        $K = Join-Path (Join-Path $HOME '.ssh') $Name
+        if (Test-Path -LiteralPath $K) { Get-Content -LiteralPath $K -Raw | Set-Clipboard; Write-Host ('copied: ' + $K); return }
+    }
+    Write-Host 'sshpubc: no public key in ~\.ssh' -ForegroundColor Red
+}
+function Copy-GitBranch { $B = (git branch --show-current); if ($B) { $B | Set-Clipboard; Write-Host ('copied: ' + $B) } }
+function Copy-GitHash { $H = (git rev-parse --short HEAD); if ($H) { $H | Set-Clipboard; Write-Host ('copied: ' + $H) } }
+Set-UserAlias 'pwdc'    'Copy-Pwd'
+Set-UserAlias 'catc'    'Copy-FileContent'
+Set-UserAlias 'clipp'   'Get-ClipboardText'
+Set-UserAlias 'lastc'   'Copy-LastCommand'
+Set-UserAlias 'sshpubc' 'Copy-SshPublicKey'
+Set-UserAlias 'gbrc'    'Copy-GitBranch'
+Set-UserAlias 'ghashc'  'Copy-GitHash'
+# @end
+
+# @group edit
+# -------------------------------------------------------------------------
+#  EDIT - open config files in $env:EDITOR, else nano, else Notepad
+# -------------------------------------------------------------------------
+function Invoke-UserEditor {
+    param([string]$Path)
+    if ($env:EDITOR) { & $env:EDITOR $Path }
+    elseif (Get-Command nano -ErrorAction SilentlyContinue) { nano $Path }
+    else { notepad $Path }
+}
+function Edit-Profile    { Invoke-UserEditor $PROFILE; Write-Host 'run reload (or open a new tab) to load the changes' }
+function Edit-SshConfig  {
+    $Dir = Join-Path $HOME '.ssh'
+    if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
+    Invoke-UserEditor (Join-Path $Dir 'config')
+}
+function Edit-GitConfig  { Invoke-UserEditor (Join-Path $HOME '.gitconfig') }
+function Edit-RepoGitConfig { $G = (git rev-parse --git-dir); if ($G) { Invoke-UserEditor (Join-Path $G 'config') } }
+function Edit-WeztermConfig { Invoke-UserEditor (Join-Path $HOME '.wezterm.lua') }
+function Edit-Hotkeys    { Invoke-UserEditor (Join-Path (Join-Path $HOME 'hotkeys') 'personal.ahk') }
+# ehosts: the hosts file needs admin; opens an elevated Notepad.
+function Edit-Hosts      { Start-Process notepad -Verb RunAs -ArgumentList (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') }
+Set-UserAlias 'eprofile'   'Edit-Profile'
+Set-UserAlias 'essh'       'Edit-SshConfig'
+Set-UserAlias 'egitconfig' 'Edit-GitConfig'
+Set-UserAlias 'egit'       'Edit-RepoGitConfig'
+Set-UserAlias 'ewezterm'   'Edit-WeztermConfig'
+Set-UserAlias 'ehotkeys'   'Edit-Hotkeys'
+Set-UserAlias 'ehosts'     'Edit-Hosts'
+# @end
 
 # @group git
 # -------------------------------------------------------------------------

@@ -59,6 +59,8 @@ aliases|system|Processes and disk (psg, killport, ports, duh)|linux,macos|on|ste
 aliases|network|Network and downloads (myip, down, serve)|linux,macos|on|step:configs
 aliases|files|Files and archives (md, extract)|linux,macos|on|step:configs
 aliases|search|History search (hgrep)|linux,macos|on|step:configs
+aliases|clipboard|Copy to clipboard (pwdc, catc, clip, lastc, sshpubc)|linux,macos|on|step:configs
+aliases|edit|Edit configs in nano (ebashrc, ezshrc, etmux, essh, eenv)|linux,macos|on|step:configs
 aliases|docker|Docker and Compose (dps, dcu, dlog, dexec)|linux,macos|on|step:configs
 aliases|kubectl|kubectl (k, kgp, kl, kd, kdel)|linux,macos|off|step:configs
 aliases|github|GitHub CLI (ghpc, ghco, ghck)|linux,macos|off|step:configs
@@ -105,6 +107,8 @@ aliases|search|Search and history (ff, sgrep, hgrep)|windows|on|step:profile
 aliases|system|System, processes, environment (psmem, killport, setenv)|windows|on|step:profile
 aliases|network|Network and Tailscale (myip, ports)|windows|on|step:profile
 aliases|git|git (gs, gc, gp, gl, gd, ...)|windows|on|step:profile
+aliases|clipboard|Copy to clipboard (pwdc, catc, lastc, sshpubc)|windows|on|step:profile
+aliases|edit|Edit configs (eprofile, essh, egitconfig, ehosts)|windows|on|step:profile
 aliases|docker|Docker and Compose (dps, dcu, dlog)|windows|on|step:profile
 aliases|kubectl|kubectl (k, ka, kd, kdel)|windows|off|step:profile
 aliases|terraform|Terraform|windows|off|step:profile

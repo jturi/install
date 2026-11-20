@@ -369,6 +369,8 @@ The menu has an **aliases** group with one item per section of
 | network | on | `myip`, `down`, `serve`, `ping5` |
 | files | on | `md`, `extract` |
 | search | on | `hgrep` |
+| clipboard | on | `pwdc` (copy current path), `catc <file>` (copy a file), `clip [text]` / `cmd \| clip`, `clipp` (print the clipboard), `lastc` (copy the last command), `sshpubc` (copy your SSH public key), `gbrc` / `ghashc` (copy git branch / hash) |
+| edit | on | in `$EDITOR` (default nano): `ebashrc`, `ezshrc`, `ebashprofile`, `ezprofile`, `ealiases`, `etmux` (reloads tmux), `essh`, `egitconfig`, `egit` (this repo), `enano`, `evim`, `einputrc`, `eenv` (kept 600), `ehosts` (sudoedit), `ekitty`, `eghostty` |
 | docker | on | `d`, `dc`, `dcu`, `dcd`, `dcr`, `dcl`, `dps`, `dpsa`, `dport`, `di`, `dlog`, `dexec`, `dmounts`, `dprune` |
 | kubectl | off | `k`, `kgp`, `kgs`, `kgd`, `kga`, `kl`, `kd` (describe), `kdel` (delete), `kctx`, `kns` |
 | github | off | `ghpc`, `ghpv`, `ghpd`, `ghco`, `ghck`, `ghst`, `ghweb` (GitHub CLI) |
@@ -388,8 +390,16 @@ group, wrap its lines in `# @group <name>` / `# @end` and add an
 The docker group's `dc` hides the `dc` calculator; untick docker if you use it.
 
 On Windows the same markers split `configs/windows/profile.ps1` into nav,
-search, system, network, git, docker, tools (on) and kubectl, terraform, dev
-(npm/yarn/pip/cargo), ai (off). They need the **PowerShell profile** item.
+search, system, network, clipboard (`pwdc`, `catc`, `clipp`, `lastc`,
+`sshpubc`, `gbrc`, `ghashc`), edit (`eprofile`, `essh`, `egitconfig`, `egit`,
+`ewezterm`, `ehotkeys`, `ehosts`), git, docker, tools (on) and kubectl,
+terraform, dev (npm/yarn/pip/cargo), ai (off).
+
+The clipboard commands try pbcopy (macOS), wl-copy / xclip / xsel (Linux
+desktops), clip.exe (WSL), then tmux's buffer, then OSC 52 (most terminals,
+also over SSH). Files that setup installs (`~/.tmux.conf`, `~/.zshrc`,
+`~/.nanorc`, kitty, Ghostty) are replaced on the next run, with a `.bak.<time>`
+copy; for lasting changes edit `configs/` here. `~/.bash_aliases` stays yours. They need the **PowerShell profile** item.
 
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo

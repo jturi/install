@@ -198,6 +198,22 @@ check extras-kd-kdel "describe delete" "$(bash -c 'source "$0"; k() { echo "$1";
 rd_home="${WORK}/rundir_home"
 mkdir -p "${rd_home}" "${WORK}/rundir"
 check extras-tmp-in-run-dir "0" "$(TARGET_HOME="${rd_home}"; RUN_DIR="${WORK}/rundir"; install_aliases >/dev/null; find "${RUN_DIR}" -mindepth 1 | wc -l | tr -d ' ')"
+# Clipboard group: a fake pbcopy records what would be copied.
+cb_bin="${WORK}/cbbin"
+mkdir -p "${cb_bin}"
+printf '#!/bin/sh\ncat >"%s/copied"\n' "${WORK}" >"${cb_bin}/pbcopy" && chmod +x "${cb_bin}/pbcopy"
+check clip-pwdc "${WORK}" "$(cd "${WORK}" && PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; pwdc >/dev/null' "${ROOT}/configs/bash_extras"; cat "${WORK}/copied")"
+check clip-args "a b" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; clip a b' "${ROOT}/configs/bash_extras"; cat "${WORK}/copied")"
+check clip-catc "$(head -n 1 "${ROOT}/README.md")" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; catc "$1" >/dev/null' "${ROOT}/configs/bash_extras" "${ROOT}/README.md"; head -n 1 "${WORK}/copied")"
+check clip-catc-missing "1" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; catc /nonexistent 2>/dev/null; echo $?' "${ROOT}/configs/bash_extras")"
+# Edit group: $EDITOR gets the right file; essh and eenv create private files.
+ed_home="${WORK}/edit_home"
+mkdir -p "${ed_home}"
+check edit-ebashrc "${ed_home}/.bashrc" "$(HOME="${ed_home}" EDITOR=echo bash -c 'source "$0"; ebashrc' "${ROOT}/configs/bash_extras" | head -n 1)"
+check edit-etmux "${ed_home}/.tmux.conf" "$(HOME="${ed_home}" EDITOR=echo PATH=/usr/bin:/bin bash -c 'source "$0"; etmux' "${ROOT}/configs/bash_extras" | head -n 1)"
+HOME="${ed_home}" EDITOR=true bash -c 'source "$0"; essh; eenv' "${ROOT}/configs/bash_extras"
+check edit-essh-private "600" "$(stat -c %a "${ed_home}/.ssh/config" 2>/dev/null || stat -f %Lp "${ed_home}/.ssh/config")"
+check edit-eenv-private "600" "$(stat -c %a "${ed_home}/.env" 2>/dev/null || stat -f %Lp "${ed_home}/.env")"
 # The docker helpers say what is missing instead of `command not found`.
 check groups-need-docker "127" "$(bash -c 'source "$0"; PATH=/nonexistent; dps >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 
