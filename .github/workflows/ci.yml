@@ -1,0 +1,76 @@
+name: ci
+
+# Manual only: Actions tab > ci > Run workflow, or `gh workflow run ci.yml`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck zsh
+      - run: make check
+
+  bash32:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-bash32
+
+  distro:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [archlinux:latest, ubuntu:24.04, debian:12, fedora:latest, rockylinux/rockylinux:9, almalinux:9]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/docker_matrix.sh "${{ matrix.image }}"
+
+  # Real install on macOS with the system bash 3.2, then a rerun that must be a no-op.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: /bin/bash --version | head -n 1
+      - run: /bin/bash tests/test_setup.sh
+      - run: /bin/bash setup.sh --yes --no-terminal --no-ssh-key --no-zsh-default </dev/null
+      - name: rerun is a no-op
+        run: |
+          out="$(/bin/bash setup.sh --yes --no-terminal --no-ssh-key --no-zsh-default </dev/null 2>&1)"
+          printf '%s\n' "${out}"
+          grep -q 'nothing to install' <<<"${out}"
+          ! grep -E '^  .*FAILED ' <<<"${out}"
+
+  # Windows PowerShell 5.1: parse check and a dry run of this commit.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: parse
+        shell: powershell
+        run: |
+          $e = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$pwd\bootstrap.ps1", [ref]$null, [ref]$e) | Out-Null
+          if ($e.Count) { $e; exit 1 }
+      - name: dry run
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOOTSTRAP_URL: https://api.github.com/repos/${{ github.repository }}/zipball/${{ github.sha }}
+          INSTALL_DRYRUN: '1'
+          INSTALL_ALLOW_ADMIN: '1'
+        run: |
+          # The selection comes from the saved config, as on a real machine.
+          $cfg = Join-Path $env:USERPROFILE '.local\bootstrap'
+          New-Item -ItemType Directory -Force $cfg | Out-Null
+          [IO.File]::WriteAllText("$cfg\config", "terminals.wezterm=1`nwin-apps.vlc=1`n")
+          $out = .\bootstrap.ps1 *>&1 | Out-String
+          Write-Output $out
+          if ($out -notmatch 'would install extras/vlc') { throw 'vlc not planned' }
+          if ($out -notmatch 'would install WezTerm') { throw 'wezterm not planned' }
+          if (-not (Test-Path "$env:USERPROFILE\install\.source")) { throw 'no .source' }

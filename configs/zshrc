@@ -62,14 +62,26 @@ for _f in ~/.bash_host ~/.bash_nav ~/.bash_git ~/.bash_kube ~/.bash_help ~/.bash
 done
 unset _f
 
-# fzf key bindings (Ctrl+R history search, Ctrl+T file search, Alt+C cd)
-if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then
-    source /usr/share/doc/fzf/examples/key-bindings.zsh
-elif [ -f /usr/share/fzf/key-bindings.zsh ]; then
-    source /usr/share/fzf/key-bindings.zsh
-fi
-if [ -f /usr/share/fzf/completion.zsh ]; then
-    source /usr/share/fzf/completion.zsh
+# fzf key bindings (Ctrl+R history search, Ctrl+T file search, Alt+C cd).
+# fzf 0.48+ prints its own setup (works with Homebrew too); older distro
+# packages ship the scripts: Debian/Ubuntu, Arch, Fedora/RHEL paths below.
+if command -v fzf >/dev/null 2>&1; then
+    if _fzf_init="$(fzf --zsh 2>/dev/null)"; then
+        eval "$_fzf_init"
+    else
+        for _f in /usr/share/doc/fzf/examples/key-bindings.zsh \
+                  /usr/share/fzf/key-bindings.zsh \
+                  /usr/share/fzf/shell/key-bindings.zsh; do
+            if [ -f "$_f" ]; then source "$_f"; break; fi
+        done
+        for _f in /usr/share/doc/fzf/examples/completion.zsh \
+                  /usr/share/fzf/completion.zsh \
+                  /usr/share/fzf/shell/completion.zsh; do
+            if [ -f "$_f" ]; then source "$_f"; break; fi
+        done
+        unset _f
+    fi
+    unset _fzf_init
 fi
 
 # opencode - AI coding assistant
@@ -103,4 +115,9 @@ fi
 # GNU make 4 from Homebrew ahead of macOS's make 3.81 (some Makefiles need 4+).
 if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/make/libexec/gnubin" ]; then
     export PATH="$(brew --prefix)/opt/make/libexec/gnubin:$PATH"
+fi
+
+# Show where each alias/function comes from before it runs.
+if [ -f ~/.bash_show_origin ]; then
+    source ~/.bash_show_origin
 fi

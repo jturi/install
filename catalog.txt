@@ -1,0 +1,86 @@
+# Everything the installer can select. Read by setup.sh and setup.ps1.
+#
+# Format: group|item|label|platforms|default|action
+#   platforms  comma list of linux, macos, wsl, windows (WSL also counts as linux)
+#   default    on or off, used until a saved selection says otherwise
+#   action     pkg                   package, name mapped by pkg_name in setup.sh
+#              scoop:<bucket>/<app>  Windows app installed by Scoop
+#              step:<name>           named install step; items may share a step
+#
+# Group names and item names form the keys in ~/.local/bootstrap/config, so
+# renaming one loses that item's saved choice.
+
+# --- Linux, macOS, WSL --------------------------------------------------------
+shell|zsh|zsh|linux,macos|on|pkg
+shell|tmux|tmux|linux,macos|on|pkg
+shell|vim|vim|linux,macos|on|pkg
+shell|nano|nano|linux,macos|on|pkg
+shell|less|less|linux,macos|on|pkg
+shell|bash|bash 5 (Homebrew)|macos|on|pkg
+shell|bash-completion|bash-completion|linux,macos|on|pkg
+shell|fzf|fzf|linux,macos|on|pkg
+shell|man-db|man-db|linux,macos|on|pkg
+system|sudo|sudo|linux,macos|on|pkg
+system|htop|htop|linux,macos|on|pkg
+system|procps|procps|linux,macos|on|pkg
+system|lsof|lsof|linux,macos|on|pkg
+system|which|which|linux,macos|on|pkg
+system|file|file|linux,macos|on|pkg
+system|diffutils|diffutils|linux,macos|on|pkg
+system|make|make|linux,macos|on|pkg
+network|git|git|linux,macos|on|pkg
+network|openssh-client|openssh-client|linux,macos|on|pkg
+network|curl|curl|linux,macos|on|pkg
+network|wget|wget|linux,macos|on|pkg
+network|rsync|rsync|linux,macos|on|pkg
+network|iproute2|iproute2|linux,macos|on|pkg
+network|iputils|iputils|linux,macos|on|pkg
+network|dnsutils|dnsutils|linux,macos|on|pkg
+network|ca-certificates|ca-certificates|linux,macos|on|pkg
+files|tree|tree|linux,macos|on|pkg
+files|tar|tar|linux,macos|on|pkg
+files|gzip|gzip|linux,macos|on|pkg
+files|zip|zip|linux,macos|on|pkg
+files|unzip|unzip|linux,macos|on|pkg
+files|jq|jq|linux,macos|on|pkg
+
+configs|tmux|tmux config|linux,macos|on|step:configs
+configs|nanorc|nano config|linux,macos|on|step:configs
+configs|zshrc|zsh config|linux,macos|on|step:configs
+configs|aliases|Shell aliases|linux,macos|on|step:configs
+configs|bin|Helper scripts|linux,macos|on|step:configs
+
+tmux-plugins|tpm|TPM and plugins|linux,macos|on|step:tpm
+
+terminals|kitty|kitty|linux,macos|off|step:terminals
+terminals|ghostty|Ghostty|linux,macos|off|step:terminals
+terminals|wezterm-wsl|WezTerm on Windows|wsl|off|step:wezterm-wsl
+
+extras|ssh-server|OpenSSH server|linux,macos|off|step:ssh-server
+extras|ssh-local-only|Restrict SSH to local network only|linux,macos|off|step:ssh-local-only
+extras|ssh-key|SSH key|linux,macos|off|step:ssh-key
+extras|zsh-login|zsh as login shell|linux,macos|off|step:zsh-login
+
+# --- Windows ------------------------------------------------------------------
+dev-tools|7zip|7-Zip|windows|on|scoop:main/7zip
+dev-tools|curl|curl|windows|on|scoop:main/curl
+dev-tools|rustup|rustup|windows|on|scoop:main/rustup
+
+win-apps|copyq|CopyQ|windows|off|scoop:extras/copyq
+win-apps|foxit-reader|Foxit Reader|windows|off|scoop:extras/foxit-reader
+win-apps|greenshot|Greenshot|windows|off|scoop:extras/greenshot
+win-apps|irfanview|IrfanView|windows|off|scoop:extras/irfanview
+win-apps|screentogif|ScreenToGif|windows|off|scoop:extras/screentogif
+win-apps|totalcommander|Total Commander|windows|off|scoop:extras/totalcommander
+win-apps|vlc|VLC|windows|off|scoop:extras/vlc
+
+terminals|wezterm|WezTerm|windows|off|step:wezterm
+terminals|cmder|Cmder|windows|off|scoop:main/cmder
+
+win-setup|profile|PowerShell profile|windows|on|step:profile
+win-setup|vscode|VS Code + extensions|windows|off|step:vscode
+win-setup|flameshot|Flameshot + hotkey|windows|off|step:flameshot
+win-setup|hotkeys|AutoHotkey hotkeys|windows|off|step:hotkeys
+win-setup|wsl|WSL (Ubuntu)|windows|off|step:wsl
+win-setup|ssh-server|OpenSSH server (sshd)|windows|off|step:ssh-server
+win-setup|ssh-key|SSH key (ed25519)|windows|on|step:ssh-key

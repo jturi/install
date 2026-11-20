@@ -48,19 +48,24 @@ lt() {
 }
 
 # ltt [count]: newest files under $PWD, any depth.
-# Portable: skips .git/node_modules, prints size + path (macOS lacks -printf,
-# BSD xargs lacks -r, so a read loop feeds ls instead).
+# Portable: skips .git/node_modules. stat (GNU -c, BSD -f; macOS find lacks
+# -printf) gives each file's mtime through xargs, so any number of files
+# works; only the newest <count> go to ls for the long listing.
 ltt() {
-  local n="${1:-10}"
+  local n="${1:-10}" f
   case "$n" in
     ''|*[!0-9]*) echo "usage: ltt [count]" >&2; return 1 ;;
   esac
-  find . \( -name .git -o -name node_modules -o -name __pycache__ \
-    -o -name .venv -o -name venv -o -name target \) -prune \
-    -o -type f -print0 2>/dev/null \
-    | { files=(); while IFS= read -r -d '' f; do files+=("$f"); done
-        ((${#files[@]})) && ls -lthd -- "${files[@]}"; } 2>/dev/null \
-    | head -n "$n"
+  local -a st files
+  if stat -c %Y . >/dev/null 2>&1; then st=(stat -c '%Y %n'); else st=(stat -f '%m %N'); fi
+  files=()
+  while IFS= read -r f; do files+=("$f"); done < <(
+    find . \( -name .git -o -name node_modules -o -name __pycache__ \
+      -o -name .venv -o -name venv -o -name target \) -prune \
+      -o -type f -print0 2>/dev/null |
+      xargs -0 "${st[@]}" 2>/dev/null | sort -rn | head -n "$n" | cut -d' ' -f2-)
+  ((${#files[@]})) || return 0
+  ls -lthd -- "${files[@]}"
 }
 
 # --- tmux ---
@@ -113,15 +118,20 @@ alias gca='git commit --verbose -a'
 alias gfix='git commit --amend'
 
 # --- git sync ---
+# gpush / gpull: remote and upstream handled by git (push.autoSetupRemote and
+# push.default simple are set globally by `git config --global`).
 alias gpush='git push'
 alias gpull='git pull --ff-only'
 alias gsync='git pull --ff-only && git push'
 alias gchm='git checkout main'
 alias gco='git checkout'
+alias gch='git checkout'
 alias gb='git branch'
+# gbr: branches merged / unmerged into main (green MERGED, yellow UNMERGED).
+alias gbr="printf '\033[32mMERGED\033[0m\n'; git branch --merged main -vv; printf '\033[33mUNMERGED\033[0m\n'; git branch --no-merged main -vv"
 
 # --- git log/remote ---
-alias gl='git log --oneline -20'
+alias gl="git log --all --graph --decorate --color --pretty=format:'%C(yellow)%h%Creset %C(blue)%ar%Creset %C(green)%<(80,trunc)%s%Creset %C(cyan)%d%Creset'"
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
@@ -136,9 +146,18 @@ alias gpop='git stash pop'
 
 # --- sudo/processes  ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
-# again: rerun last command as root (fc is POSIX; works in bash+zsh,
-# unlike !! inside aliases which only bash expands).
-again() { sudo "$(fc -ln -1)"; }
+# again: rerun the previous command as root (fc is POSIX; works in bash+zsh,
+# unlike !! inside aliases which only bash expands). `fc -ln -1` prints the
+# line with leading blanks; eval splits it into words the way the shell did.
+# It runs exactly what you typed last, so it is shown first.
+again() {
+  local c
+  c="$(fc -ln -1)"
+  c="${c#"${c%%[![:space:]]*}"}"
+  [ -n "$c" ] || { echo "again: no previous command" >&2; return 1; }
+  printf 'sudo %s\n' "$c" >&2
+  eval "sudo $c"
+}
 # psg <pat>: find processes (pgrep ships on both via procps / macOS base).
 psg() {
   [ $# -ge 1 ] || { echo "usage: psg <pattern>" >&2; return 1; }
@@ -147,22 +166,32 @@ psg() {
 # Top RAM/CPU consumers via POSIX sort -n -k (dotfiles use GNU-only --sort).
 alias psmem='ps aux | sort -nrk 4 | head -n 15'
 alias pscpu='ps aux | sort -nrk 3 | head -n 15'
-# killport <port>: kill whatever listens there (`lsof -ti` works on both;
-# `ss -tlnp` is Linux-only).
+# killport <port>: kill whatever LISTENS on TCP <port>. Not clients that
+# merely talk to it: `lsof -i tcp:443` would include your browser. lsof
+# works on both (`ss -tlnp` is Linux-only).
 killport() {
   [ $# -eq 1 ] || { echo "usage: killport <port>" >&2; return 1; }
-  # shellcheck disable=SC2046 # intentional word-splitting of PID list
-  kill $(lsof -ti "tcp:$1") || return
+  case "$1" in ''|*[!0-9]*) echo "killport: not a port: $1" >&2; return 1 ;; esac
+  local pids
+  pids="$(lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null)"
+  [ -n "$pids" ] || { echo "killport: nothing listens on TCP $1" >&2; return 1; }
+  # xargs splits the PID list the same way in bash and zsh (zsh does not
+  # word-split an unquoted $pids).
+  printf '%s\n' "$pids" | xargs kill
 }
 # ports: listening TCP sockets (`lsof` ships on both via setup/brew).
 alias ports='lsof -i -P -n | grep LISTEN'
 
-# df -h: identical flags on both. duh: plain `du -sh` per entry
-# (GNU `du --max-depth` and `sort -h` do not exist on macOS).
+# df -h: identical flags on both. duh: size of each entry, smallest first.
+# Sorted on kilobytes, then printed human-readable: GNU `du --max-depth`
+# and `sort -h` do not exist on macOS, and `sort -n` misorders "2.0M" < "600K".
 alias dfh='df -h'
 duh() {
   if [ -n "${ZSH_VERSION:-}" ]; then setopt localoptions null_glob; else shopt -s nullglob; fi
-  du -sh -- * .[!.]* 2>/dev/null | sort -n
+  du -sk -- * .[!.]* 2>/dev/null | sort -n | awk -F'\t' '{
+    s = $1; u = "K"
+    if (s >= 1048576) { s /= 1048576; u = "G" } else if (s >= 1024) { s /= 1024; u = "M" }
+    printf "%6.1f%s\t%s\n", s, u, $2 }'
   if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
 }
 
@@ -175,7 +204,7 @@ down() {
   if command -v curl >/dev/null 2>&1; then
     curl -fL --progress-bar -o "${2:-$(basename "$1")}" "$1"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress "$1"
+    wget -q --show-progress -O "${2:-$(basename "$1")}" "$1"
   else
     echo "down: neither curl nor wget found" >&2; return 1
   fi
@@ -202,10 +231,14 @@ extract() {
 # --- search ---
 # hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
-# alg <pat>: grep loaded aliases (colored) + matching function names.
+# alg <pat>: grep loaded aliases + matching function names.
 # `alias` prints name=value lines, so `alg psmem` shows its line.
+# Colors only when stdout is a terminal (not piped or redirected) and
+# NO_COLOR is unset (https://no-color.org).
 alg() {
   [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
-  alias | grep -i --color=always -- "$*" || true
-  declare -F | awk '{print $NF}' | grep -i --color=always -- "$*" || true
+  local color=never
+  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
+  alias | grep -i --color="${color}" -- "$*" || true
+  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
 }

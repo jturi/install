@@ -1,0 +1,11 @@
+# Fixture read by both engines. Do not reuse catalog.txt: tests must not change with it.
+# group|item|label|platforms|default|action
+
+shell|zsh|zsh|linux,macos|on|pkg
+shell|less|less|linux|off|pkg
+configs|tmux|tmux config|linux,macos|on|step:configs
+terminals|ghostty|Ghostty|macos|off|step:terminals
+terminals|wezterm-wsl|WezTerm on Windows|wsl|off|step:wezterm-wsl
+terminals|cmder|Cmder|windows|off|scoop:main/cmder
+win-apps|vlc|VLC|windows|on|scoop:extras/vlc
+win-setup|profile|PowerShell profile|windows|on|step:profile
