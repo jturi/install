@@ -6,6 +6,8 @@
 
 MENU_GROUPS=() MENU_VIEW=()
 MENU_CURSOR=0 MENU_TOP=0 MENU_ROWS=20 MENU_OPEN_GROUP="" MENU_RESULT="" MENU_GROUP_CURSOR=0
+# Heading of the menu; scripts other than setup.sh set their own.
+MENU_TITLE="${MENU_TITLE:-What to install}"
 
 # True when a menu can be drawn: terminal on both ends, and not a dumb one.
 menu_available() {
@@ -123,9 +125,9 @@ menu_handle_key() {
 menu_render() {
   local row last i mark on total pointer
   if [[ -n "${MENU_OPEN_GROUP}" ]]; then
-    printf 'What to install > %s\n\n' "${MENU_OPEN_GROUP}"
+    printf '%s > %s\n\n' "${MENU_TITLE}" "${MENU_OPEN_GROUP}"
   else
-    printf 'What to install\n\n'
+    printf '%s\n\n' "${MENU_TITLE}"
   fi
   last=$((MENU_TOP + MENU_ROWS))
   ((last <= ${#MENU_VIEW[@]})) || last=${#MENU_VIEW[@]}

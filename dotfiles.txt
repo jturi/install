@@ -1,0 +1,27 @@
+# Files this repo mirrors from the dotfiles repo. Read by
+# scripts/dotfiles-drift.sh (make dotfiles-drift, dotfiles-select, sync-dotfiles).
+#
+# Format: group|item|label|default|install file|dotfiles file|stop|ignore
+#   default  on or off: checked until `make dotfiles-select` saves your ticks
+#   stop     compare only the lines of the install file above the first line
+#            that starts with this text (the install repo's own tail, kept on
+#            sync); - for none
+#   ignore   extended regex: lines matching it on either side are left out of
+#            the comparison (headers that differ on purpose); - for none. It is
+#            the last field, so it may contain |. A file with an ignore regex is
+#            check-only: sync would drop the install repo's own lines, so merge
+#            it by hand.
+#
+# Group and item form the keys in ~/.local/bootstrap/dotfiles-drift, so
+# renaming one loses its saved tick.
+
+shell|zshrc|zsh config, above the alias loader|on|configs/zshrc|dot_zshrc|# Load custom aliases in Zsh|-
+shell|nanorc|nano config|on|configs/nanorc|dot_nanorc|-|^#( ~/\.nanorc| nano ~/\.nanorc|# syntax highlighting)
+shell|show-origin|show_origin (where an alias comes from)|on|configs/bash_show_origin|dot_bash_show_origin|-|^#|SHOW_ORIGIN_FILES:=
+
+tmux|conf|tmux.conf|on|configs/tmux.conf|dot_tmux.conf|-|-
+tmux|tmuxhelp|tmuxhelp.sh|on|configs/bin/tmuxhelp.sh|scripts/bin/tmuxhelp.sh|-|-
+
+terminals|ghostty|Ghostty (Linux)|on|configs/ghostty/linux.config|dot_config/ghostty/config|-|^#
+terminals|kitty|kitty (Linux; rewritten here, mostly differs)|off|configs/kitty/linux.conf|dot_config/kitty/kitty.conf|-|^#
+terminals|wezterm|WezTerm (Windows; rewritten here, mostly differs)|off|configs/wezterm/windows.lua|dot_wezterm.lua|-|^[[:space:]]*--

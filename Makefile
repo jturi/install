@@ -9,9 +9,9 @@
 .PHONY: help
 .PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default windows
 .PHONY: lint test test-bash32 test-docker test-windows check test-all
-.PHONY: sync-dotfiles
+.PHONY: dotfiles-drift dotfiles-select dotfiles-list sync-dotfiles
 
-SHELL_FILES := setup.sh bootstrap.sh lib/*.sh tests/*.sh
+SHELL_FILES := setup.sh bootstrap.sh lib/*.sh scripts/*.sh tests/*.sh
 PS1_FILES := setup.ps1 bootstrap.ps1 windows/lib.ps1 windows/menu.ps1 windows/steps/*.ps1 tests/test_windows.ps1 tests/check_ps1.ps1 configs/windows/profile.ps1
 ARGS        ?=
 DOTFILES    ?= ../dotfiles
@@ -77,6 +77,7 @@ test: ## Unit tests (no root, no containers)
 	bash tests/test_repo.sh --self-test
 	bash tests/test_repo.sh
 	bash tests/test_bootstrap.sh
+	bash tests/test_drift.sh
 
 test-bash32: ## Unit tests + macOS dry-run under bash 3.2 (the macOS system bash)
 	docker run --rm --user 1000 -e HOME=/tmp/h -v "$(CURDIR):/src:ro" bash:3.2 \
@@ -102,8 +103,14 @@ test-all: lint test test-bash32 test-docker ## Every test, including containers
 
 ##@ Maintenance
 
-sync-dotfiles: ## Copy tmux.conf + zshrc from DOTFILES=../dotfiles, keep the alias block
-	cp "$(DOTFILES)/dot_tmux.conf" configs/tmux.conf
-	{ cat "$(DOTFILES)/dot_zshrc"; echo; sed -n '/^# Load custom aliases in Zsh/,$$p' configs/zshrc; } > configs/zshrc.new
-	mv configs/zshrc.new configs/zshrc
-	git --no-pager diff --stat -- configs/
+dotfiles-drift: ## Compare the ticked mirrored files with DOTFILES=../dotfiles (ARGS=-v for diffs)
+	DOTFILES="$(DOTFILES)" scripts/dotfiles-drift.sh check $(ARGS)
+
+dotfiles-select: ## Tick which mirrored files (dotfiles.txt) to check and sync
+	DOTFILES="$(DOTFILES)" scripts/dotfiles-drift.sh select
+
+dotfiles-list: ## List the mirrored files and which are ticked
+	DOTFILES="$(DOTFILES)" scripts/dotfiles-drift.sh list
+
+sync-dotfiles: ## Copy the ticked drifted files from DOTFILES, showing each change and asking first
+	DOTFILES="$(DOTFILES)" scripts/dotfiles-drift.sh sync $(ARGS)
