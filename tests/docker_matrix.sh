@@ -56,10 +56,10 @@ for image in "${IMAGES[@]}"; do
       tmux -f ~/.tmux.conf new-session -d -s t && tmux kill-server
       ls ~/.local/bootstrap/logs/setup-*.log >/dev/null
       # Rerun: idempotent. No package install, no new backups, all steps OK.
-      before=$(find ~ -name "*.bak.*" | wc -l)
+      before=$(find ~/.local/bootstrap/backups -type f 2>/dev/null | wc -l)
       out=$(/src/setup.sh --yes --ssh-server --ssh-local-only --ssh-key --zsh-default </dev/null 2>&1)
       echo "$out" | grep -q "nothing to install" || { echo "$out"; echo "rerun reinstalled packages"; exit 1; }
-      [ "$(find ~ -name "*.bak.*" | wc -l)" -eq "$before" ] || { echo "rerun made backups"; exit 1; }
+      [ "$(find ~/.local/bootstrap/backups -type f 2>/dev/null | wc -l)" -eq "$before" ] || { echo "rerun made backups"; exit 1; }
       # Containers have no systemd, so only the ssh server step may warn.
       echo "$out" | grep -E "^  .*(FAILED|WARN) " | grep -v "WARN .* ssh server" && { echo "rerun not clean"; exit 1; }
       echo "$out" | grep -q "^  OK      Restrict SSH to local network only" || { echo "$out"; echo "check step missing"; exit 1; }

@@ -70,7 +70,7 @@ cd ~/repos/install
 ./setup.sh --dry-run  # show what would run, change nothing
 ```
 
-Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--no-packages`, `--no-configs`,
+Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--restore [TIME|list]`, `--no-packages`, `--no-configs`,
 `--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-local-only`, `--ssh-key`, `--no-ssh-key`,
 `--zsh-default`, `--no-zsh-default`, `-v/--verbose`, `--debug`, `--no-log`, `-h/--help`.
 
@@ -116,7 +116,7 @@ Run it as often as you like; a second run changes nothing.
     older than 6 hours.
   - Configs are written to a temp file and renamed into place, so an interrupted
     run never leaves a half-written `.zshrc`. Every changed file is backed up
-    first (`<file>.bak.<time>`, with a counter if one exists).
+    first, into one directory per run (see [Backups and restore](#backups-and-restore)).
   - sudo is checked once before the first step and kept valid until the end, so
     a long install never stops halfway for a password.
   - A lock (`~/.local/bootstrap/lock`) stops two runs at once. A lock left by a
@@ -336,11 +336,34 @@ package manager:
 - [TPM](https://github.com/tmux-plugins/tpm) in `~/.tmux/plugins/tpm`, plus
   the plugins listed in `.tmux.conf` (resurrect, continuum).
 
-Before a file changes, `setup.sh` copies it to `<file>.bak.$(date +%Y%m%d_%H%M%S)`,
-for example `~/.zshrc.bak.20261018_191502`. This covers every config in
-`configs/`, the alias loader in `~/.bashrc` (macOS: `~/.bash_profile`), and the
-`~/.zprofile` line on macOS. A file that is already
-identical to the repo version is left alone, so reruns make no new backups.
+A file that is already identical to the repo version is left alone, so reruns
+make no new backups. Before any other file in your home changes, it is backed
+up; see [Backups and restore](#backups-and-restore).
+
+## Backups and restore
+
+Each run that changes a file copies it first to
+`~/.local/bootstrap/backups/<time>/<path under your home>`, for example
+`~/.local/bootstrap/backups/20261120_191502/.zshrc`, and lists it in that
+directory's `MANIFEST`. A file changed twice in one run is backed up once, as
+it was before the run. Files outside your home (WSL: the Windows home) go under
+`_abs/<absolute path>`. The directory is private (`0700`), and the newest 10
+runs are kept. This covers every config in `configs/`, the alias loader in
+`~/.bashrc` (macOS: `~/.bash_profile`), the `~/.zprofile` line on macOS, a lone
+SSH public key, and the saved selection.
+
+```sh
+./setup.sh --restore list               # the backups, with file counts
+./setup.sh --restore --dry-run          # what the newest backup would put back
+./setup.sh --restore                    # put back the newest backup
+./setup.sh --restore 20261120_191502    # put back that run's files
+```
+
+A restore backs up the files it replaces into a new run directory first, so it
+can be undone the same way. Like a run, it needs a terminal or `--yes`.
+
+The OpenSSH `sshd_config` is a system file and is still backed up next to
+itself, as `sshd_config.bak.<time>`.
 
 ## Aliases
 

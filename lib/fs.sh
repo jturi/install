@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Files: compare, back up, private dirs, atomic install of a config file.
+# Files: compare, private dirs, atomic install of a config file.
 # Sourced by setup.sh; uses its globals (DRY_RUN, TARGET_HOME, ...).
 
 # cmp comes from diffutils, which minimal images lack.
@@ -9,18 +9,6 @@ files_equal() {
   else
     [[ "$(<"$1")" == "$(<"$2")" ]]
   fi
-}
-
-# Copy an existing file to <file>.bak.YYYYmmdd_HHMMSS before it changes.
-# Does nothing when the file does not exist.
-backup_file() {
-  local file="$1" backup
-  [[ -e "${file}" || -L "${file}" ]] || return 0
-  backup="${file}.bak.$(date +%Y%m%d_%H%M%S)"
-  local base="${backup}" n=0
-  while [[ -e "${backup}" ]]; do n=$((n + 1)); backup="${base}.${n}"; done
-  info "Backing up ${file} -> ${backup}"
-  run cp -P "${file}" "${backup}"
 }
 
 # Make a directory only its owner can read: setup logs, the saved selection

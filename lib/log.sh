@@ -91,9 +91,11 @@ have_tty() {
   [[ -t 0 ]]
 }
 
+# Ask a yes/no question; Enter means yes. Nobody to ask means no: an unattended
+# run must say --yes.
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
-  [[ -t 0 ]] || return 0
+  have_tty || return 1
   local reply
   read -r -p "$1 [Y/n] " reply
   [[ -z "${reply}" || "${reply}" =~ ^[Yy] ]]

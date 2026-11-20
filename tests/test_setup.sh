@@ -12,6 +12,13 @@ set +e
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${WORK}"' EXIT
 FAILS=0
+# Never the developer's real home: anything a test does not point elsewhere
+# (backups of files outside TARGET_HOME, the saved selection) lands here.
+HOME="${WORK}/default-home" TARGET_HOME="${WORK}/default-home"
+mkdir -p "${HOME}"
+# Backups of <rel> (a path under the given home), one line per run that saved it.
+baks() { find "$1/.local/bootstrap/backups" -path "*/[0-9]*_[0-9]*/$2" 2>/dev/null; }
+nbaks() { baks "$@" | wc -l | tr -d ' '; }
 # Stand-ins for sshd that accept or reject any config. Not /bin/true: macOS
 # has it only in /usr/bin.
 mkdir -p "${WORK}/bin"
@@ -117,12 +124,15 @@ check nanorc-copied "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" 
 check kitty-not-installed "no" "$([[ -e "${home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
 check ghostty-not-installed "no" "$([[ -e "${home}/.config/ghostty/config" ]] && echo yes || echo no)"
 TARGET_HOME="${home}" install_configs >/dev/null
-check idempotent-no-backup "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+check idempotent-no-backup "0" "$(find "${home}/.local/bootstrap/backups" -type f 2>/dev/null | wc -l | tr -d ' ')"
 echo "old" >"${home}/.nanorc"
 TARGET_HOME="${home}" install_configs >/dev/null
-check backup-created "1" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | wc -l | tr -d ' ')"
-check backup-content "old" "$(cat "${home}"/.nanorc.bak.*)"
-check backup-name-format "yes" "$(find "${home}" -maxdepth 1 -name '.nanorc.bak.*' | grep -Eq '\.nanorc\.bak\.[0-9]{8}_[0-9]{6}$' && echo yes)"
+check backup-created "1" "$(nbaks "${home}" .nanorc)"
+check backup-content "old" "$(cat "$(baks "${home}" .nanorc)")"
+check backup-dir-format "yes" "$(baks "${home}" .nanorc | grep -Eq '/\.local/bootstrap/backups/[0-9]{8}_[0-9]{6}/\.nanorc$' && echo yes)"
+check backup-none-beside "0" "$(find "${home}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+check backup-manifest "${home}/.nanorc" "$(cat "$(dirname "$(baks "${home}" .nanorc)")/MANIFEST")"
+check backup-root-private "700" "$(stat -c %a "${home}/.local/bootstrap/backups" 2>/dev/null || stat -f %Lp "${home}/.local/bootstrap/backups")"
 check new-file-installed "same" "$(cmp -s "${ROOT}/configs/nanorc" "${home}/.nanorc" && echo same)"
 # A symlinked target is backed up and replaced by a real file; the link target is untouched.
 echo "linked" >"${WORK}/link-target"
@@ -130,7 +140,7 @@ rm -f "${home}/.zshrc" && ln -s "${WORK}/link-target" "${home}/.zshrc"
 TARGET_HOME="${home}" install_configs >/dev/null
 check symlink-replaced "file" "$([[ -f "${home}/.zshrc" && ! -L "${home}/.zshrc" ]] && echo file)"
 check symlink-target-kept "linked" "$(cat "${WORK}/link-target")"
-check symlink-backup "1" "$(find "${home}" -maxdepth 1 -name '.zshrc.bak.*' | wc -l | tr -d ' ')"
+check symlink-backup "link" "$([[ -L "$(baks "${home}" .zshrc)" ]] && echo link)"
 
 # private_dir: created 0700, tightened when looser, silent when already private.
 pd="${WORK}/pd"
@@ -155,11 +165,11 @@ check origin-created "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah}/
 check aliases2-not-created "" "$(ls "${ah}/.bash_aliases2" 2>/dev/null)"
 check loader-in-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
 check loader-origin-in-bashrc "1" "$(grep -c 'source ~/.bash_show_origin' "${ah}/.bashrc")"
-check no-bashrc-backup-when-new "0" "$(find "${ah}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
+check no-bashrc-backup-when-new "0" "$(nbaks "${ah}" .bashrc)"
 TARGET_HOME="${ah}" install_aliases >/dev/null
 check loader-not-duplicated "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
 check origin-loader-not-duplicated "1" "$(grep -c 'source ~/.bash_show_origin' "${ah}/.bashrc")"
-check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+check aliases-rerun-no-backup "0" "$(find "${ah}/.local/bootstrap/backups" -type f 2>/dev/null | wc -l | tr -d ' ')"
 # Loader sources every file in order: extras before origin (origin hooks the prompt, so it loads last).
 check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
 
@@ -174,7 +184,7 @@ TARGET_HOME="${ah2}" install_aliases macos >/dev/null
 check own-aliases-kept "alias mine='echo mine'" "$(cat "${ah2}/.bash_aliases")"
 check aliases2-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah2}/.bash_aliases2" && echo same)"
 check loader-in-profile "1" "$(grep -c 'source ~/.bash_aliases2' "${ah2}/.bash_profile")"
-check profile-backup "# profile" "$(cat "${ah2}"/.bash_profile.bak.*)"
+check profile-backup "# profile" "$(cat "$(baks "${ah2}" .bash_profile)")"
 check bashrc-untouched "" "$(ls "${ah2}/.bashrc" 2>/dev/null)"
 check loader-works "mine" "$(HOME="${ah2}" bash -c 'shopt -s expand_aliases; source ~/.bash_profile; alias mine >/dev/null && echo mine')"
 check extras2-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah2}/.bash_extras" && echo same)"
@@ -217,14 +227,14 @@ printf '\n# Load custom aliases in Zsh\nif [ -f ~/.bash_aliases ]; then\n    sou
 TARGET_HOME="${ah3}" install_aliases >/dev/null
 check upgrade-adds-extras-loader "1" "$(grep -c 'source ~/.bash_extras' "${ah3}/.bashrc")"
 check upgrade-keeps-alias-count "1" "$(grep -c 'source ~/.bash_aliases2' "${ah3}/.bashrc")"
-check upgrade-backup "1" "$(find "${ah3}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
+check upgrade-backup "1" "$(nbaks "${ah3}" .bashrc)"
 TARGET_HOME="${ah3}" install_aliases >/dev/null
 check upgrade-idempotent "1" "$(grep -c 'source ~/.bash_extras' "${ah3}/.bashrc")"
 check upgrade-adds-origin-loader "1" "$(grep -c 'source ~/.bash_show_origin' "${ah3}/.bashrc")"
 check upgrade-origin-file "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah3}/.bash_show_origin" && echo same)"
 TARGET_HOME="${ah3}" install_aliases >/dev/null
 check upgrade-origin-idempotent "1" "$(grep -c 'source ~/.bash_show_origin' "${ah3}/.bashrc")"
-check upgrade-origin-single-backup "1" "$(find "${ah3}" -maxdepth 1 -name '.bashrc.bak.*' | wc -l | tr -d ' ')"
+check upgrade-origin-single-backup "1" "$(nbaks "${ah3}" .bashrc)"
 
 # origin script: parses in bash (and zsh when present); toggle works without a prompt.
 check origin-parse "ok" "$(bash -n "${ROOT}/configs/bash_show_origin" && { ! command -v zsh >/dev/null || zsh -n "${ROOT}/configs/bash_show_origin"; } && echo ok)"
@@ -312,7 +322,7 @@ check bin-bashrc-path "1" "$(grep -cF "${path_line}" "${bin_home}/.bashrc")"
 TARGET_HOME="${bin_home}" install_aliases >/dev/null
 TARGET_HOME="${bin_home}" install_bin_scripts >/dev/null
 check bin-idempotent "1" "$(grep -cF "${path_line}" "${bin_home}/.bashrc")"
-check bin-rerun-no-backup "0" "$(find "${bin_home}/.local/bin" -maxdepth 1 -name 'tmuxhelp.sh.bak.*' | wc -l | tr -d ' ')"
+check bin-rerun-no-backup "0" "$(nbaks "${bin_home}" .local/bin/tmuxhelp.sh)"
 check bin-wrapper "1" "$(grep -c 'tmuxhelp()' "${ROOT}/configs/bash_extras")"
 # tmuxhelp works against a real ~/.tmux.conf (quick-ref markers).
 # (wrapper prefers tmuxhelp.sh on PATH, falls back to ~/.local/bin;
@@ -326,7 +336,7 @@ mkdir -p "${home_mac}/.tmux/plugins/tpm"
 TARGET_HOME="${home_mac}" install_configs macos >/dev/null
 check macos-nanorc "include \"$(brew_prefix)/share/nano/*.nanorc\"" "$(grep '^include' "${home_mac}/.nanorc")"
 TARGET_HOME="${home_mac}" install_configs macos >/dev/null
-check macos-nanorc-idempotent "0" "$(find "${home_mac}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
+check macos-nanorc-idempotent "0" "$(find "${home_mac}/.local/bootstrap/backups" -type f 2>/dev/null | wc -l | tr -d ' ')"
 check macos-kitty-skipped "no" "$([[ -e "${home_mac}/.config/kitty/kitty.conf" ]] && echo yes || echo no)"
 check macos-ghostty-skipped "no" "$([[ -e "${home_mac}/Library/Application Support/com.mitchellh.ghostty/config.ghostty" ]] && echo yes || echo no)"
 # Opt-in path still copies the right per-platform files.
@@ -406,10 +416,10 @@ check config-save-bytes "same" "$(cmp "${WORK}/save/config" "${ROOT}/tests/fixtu
 (save_fixture "${WORK}/a b/.local/bootstrap/config")
 check config-save-space-path "same" "$(cmp "${WORK}/a b/.local/bootstrap/config" "${ROOT}/tests/fixtures/config.expected" && echo same)"
 (save_fixture "${WORK}/save/config")
-check config-unchanged-no-backup "0" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+check config-unchanged-no-backup "0" "$(nbaks "${HOME}" "_abs${WORK}/save/config")"
 printf 'shell.zsh=0\n' >"${WORK}/save/config"
 (save_fixture "${WORK}/save/config")
-check config-changed-one-backup "1" "$(find "${WORK}/save" -name 'config.bak.*' | wc -l | tr -d ' ')"
+check config-changed-one-backup "1" "$(nbaks "${HOME}" "_abs${WORK}/save/config")"
 check config-no-temp-left "0" "$(find "${WORK}/save" -name '*.tmp.*' | wc -l | tr -d ' ')"
 check config-dry-run-writes-nothing "no" "$(DRY_RUN=1; save_fixture "${WORK}/dry/config"; [[ -e "${WORK}/dry" ]] && echo yes || echo no)"
 if [[ "${EUID}" -ne 0 ]]; then
@@ -673,7 +683,7 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   mkdir -p "${home6}/.ssh"
   echo "ssh-ed25519 AAAA other" >"${home6}/.ssh/id_ed25519.pub"
   TARGET_HOME="${home6}" SSH_KEY_MODE=create setup_ssh_key </dev/null >/dev/null 2>&1
-  check lone-pub-backed-up "1" "$(grep -l 'AAAA other' "${home6}/.ssh/"id_ed25519.pub.bak.* 2>/dev/null | wc -l | tr -d ' ')"
+  check lone-pub-backed-up "1" "$(baks "${home6}" .ssh/id_ed25519.pub | xargs grep -l 'AAAA other' 2>/dev/null | wc -l | tr -d ' ')"
   check lone-pub-new-key "yes" "$([[ -f "${home6}/.ssh/id_ed25519" ]] && echo yes)"
 fi
 
@@ -878,8 +888,11 @@ check apt-lock-timeout "1" "$(apt_refresh() { :; }; DRY_RUN=1 pkg_install debian
 
 # Backups never overwrite each other within one second.
 bk="${WORK}/bk"; mkdir -p "${bk}"; echo a >"${bk}/f"
-(backup_file "${bk}/f"; backup_file "${bk}/f"; backup_file "${bk}/f") >/dev/null 2>&1
-check backup-unique-names "3" "$(find "${bk}" -name 'f.bak.*' | wc -l | tr -d ' ')"
+# One run keeps the first copy: the file as it was before the run.
+(TARGET_HOME="${bk}"; backup_file "${bk}/f"; echo b >"${bk}/f"; backup_file "${bk}/f") >/dev/null 2>&1
+check backup-first-copy-kept "a" "$(cat "$(baks "${bk}" f)")"
+(cd "${bk}" && TARGET_HOME="${bk}" && echo rel >g && backup_file g) >/dev/null 2>&1
+check backup-relative-path "rel" "$(cat "$(baks "${bk}" g)")"
 
 # Atomic copy: no temp left, symlink replaced (not written through), mode set.
 ac="${WORK}/ac"; mkdir -p "${ac}"; echo target >"${ac}/linked"; ln -s "${ac}/linked" "${ac}/dst"
@@ -893,9 +906,9 @@ check atomic-fails-cleanly "1 0" "$( (atomic_copy "${ROOT}/configs/nanorc" "${WO
 # Reruns change nothing: second config install makes no backups.
 idem="${WORK}/idem"; mkdir -p "${idem}"
 (load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) >/dev/null 2>&1
-before="$(find "${idem}" -name '*.bak.*' | wc -l | tr -d ' ')"
+before="$(find "${idem}/.local/bootstrap/backups" -type f 2>/dev/null | wc -l | tr -d ' ')"
 (load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) >/dev/null 2>&1
-check configs-rerun-no-backups "${before}" "$(find "${idem}" -name '*.bak.*' | wc -l | tr -d ' ')"
+check configs-rerun-no-backups "${before}" "$(find "${idem}/.local/bootstrap/backups" -type f 2>/dev/null | wc -l | tr -d ' ')"
 check configs-rerun-says-unchanged "yes" "$( (load_catalog debian; config_load "${WORK}/none"; TARGET_HOME="${idem}" install_configs debian) 2>&1 | grep -c 'unchanged' | grep -q '^[1-9]' && echo yes)"
 
 # Summary: OK, WARN (step warned) and FAILED; only FAILED fails the run.
@@ -958,6 +971,29 @@ check run-real-lock-released "no" "$([[ -e "${m_home}/.local/bootstrap/lock" ]] 
 check run-real-log-has-summary "1" "$(cat "${m_home}"/.local/bootstrap/logs/setup-*.log | grep -c '==> Summary')"
 m_reset; out="$(run_main --yes --no-log)"
 check run-no-log "0" "$(find "${m_home}/.local/bootstrap" -name 'setup-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+
+# Backups: newest KEEP_BACKUPS run dirs kept; --restore puts files back.
+m_reset; br="${m_home}/.local/bootstrap/backups"
+for i in $(seq 10 21); do mkdir -p "${br}/20200101_0000${i}"; done
+M_EXTRA='KEEP_BACKUPS=10'; run_main --yes >/dev/null
+check backups-pruned "10" "$(find "${br}" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+check backups-pruned-oldest "no" "$([[ -d "${br}/20200101_000010" ]] && echo yes || echo no)"
+m_reset; br="${m_home}/.local/bootstrap/backups"
+mkdir -p "${br}/20200101_000001/.config/x"
+echo v1 >"${br}/20200101_000001/.zshrc"; echo cfg1 >"${br}/20200101_000001/.config/x/c"
+printf '%s\n' "${m_home}/.zshrc" "${m_home}/.config/x/c" >"${br}/20200101_000001/MANIFEST"
+echo v2 >"${m_home}/.zshrc"
+check restore-list "1" "$(run_main --restore list | grep -c '20200101_000001  2 files')"
+check restore-dry-run "v2" "$(run_main --restore --dry-run >/dev/null; cat "${m_home}/.zshrc")"
+check restore-no-tty-refuses "1" "$(run_main --restore >/dev/null; echo $?)"
+out="$(run_main --restore 20200101_000001 --yes)"; rc=$?
+check restore-rc "0" "${rc}"
+check restore-file "v1" "$(cat "${m_home}/.zshrc")"
+check restore-missing-file-created "cfg1" "$(cat "${m_home}/.config/x/c")"
+check restore-backs-up-current "v2" "$(baks "${m_home}" .zshrc | grep -v 20200101_000001 | xargs cat)"
+check restore-says-undo "1" "$(grep -c 'undo with: .*--restore [0-9]' <<<"${out}")"
+check restore-latest "1" "$(run_main --restore --yes --dry-run | grep -c "from ${br}/[0-9]")"
+check restore-unknown "1" "$(run_main --restore 19990101_000000 --yes >/dev/null; echo $?)"
 
 # Catalog: a duplicate key on one platform is an error.
 printf '%s\n' 'a|x|X|linux|on|pkg' 'a|x|X2|linux|on|pkg' >"${WORK}/dup.txt"

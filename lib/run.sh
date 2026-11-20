@@ -268,6 +268,7 @@ start_log() {
 }
 
 cleanup() {
+  ((!PRUNE_BACKUPS)) || prune_backups
   [[ -z "${SUDO_KEEPALIVE}" ]] || kill "${SUDO_KEEPALIVE}" 2>/dev/null || true
   [[ -z "${LOCK_DIR}" ]] || rm -rf "${LOCK_DIR}"
   [[ -z "${RUN_DIR}" ]] || rm -rf "${RUN_DIR}"
@@ -288,6 +289,7 @@ start_run() {
   ((!DRY_RUN)) || return 0
   private_dir "${state}" >/dev/null || warn "cannot make ${state} private"
   take_lock "${state}/lock"
+  PRUNE_BACKUPS=1
   ((!LOGGING)) || start_log "${state}/logs"
   [[ -z "${LOG_FILE}" ]] || info "Logging to ${LOG_FILE}"
   prime_sudo "${family}"

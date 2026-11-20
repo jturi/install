@@ -76,6 +76,10 @@ STEP_LABELS=() STEP_STATUS=() STEP_TIME=()
 STEP_WARN_FILE="" STEP_ERR_FILE="" RUN_DIR="" LOCK_DIR="" LOG_FILE="" SUDO_KEEPALIVE="" TEE_PID=""
 SSH_CLIENT_ADDR="" # set by ssh_session_denied, for its caller's message
 KEEP_LOGS=20
+KEEP_BACKUPS=10
+PRUNE_BACKUPS=0
+BACKUP_DIR="" # this run's backup dir, made on the first backup
+RESTORE=""     # --restore: latest, list or a <time>
 
 # catalog item : config source (relative to configs/) : target (relative to $TARGET_HOME)
 CONFIG_MAP=(
@@ -94,6 +98,8 @@ source "${SCRIPT_DIR}/lib/log.sh"
 source "${SCRIPT_DIR}/lib/os.sh"
 # shellcheck source=lib/fs.sh
 source "${SCRIPT_DIR}/lib/fs.sh"
+# shellcheck source=lib/backup.sh
+source "${SCRIPT_DIR}/lib/backup.sh"
 # shellcheck source=lib/pkg.sh
 source "${SCRIPT_DIR}/lib/pkg.sh"
 # shellcheck source=lib/ssh.sh
@@ -113,6 +119,9 @@ Options:
                      Needed when there is no terminal to ask "Go ahead?"
       --select       Show the menu and save the selection; install nothing
       --config FILE  Use FILE instead of ~/.local/bootstrap/config
+      --restore [TIME|list]
+                     Put back the files a run backed up (default: the newest
+                     backup); `list` shows the backups
   -h, --help         Show this help
 
 These change one run, skip the menu, and are never saved:
@@ -141,6 +150,8 @@ are skipped, and every changed file is backed up first.
 EOF
 }
 
+BACKUP_NAME_RE='^[0-9]{8}_[0-9]{6}(\.[0-9]+)?$'
+
 parse_args() {
   while (($#)); do
     case "$1" in
@@ -164,6 +175,13 @@ parse_args() {
       --terminal) TERMINAL_MODE=install FLAGS_USED=1 ;;
       --no-terminal) TERMINAL_MODE=skip FLAGS_USED=1 ;;
       -v | --verbose) VERBOSE=1 ;;
+      --restore)
+        RESTORE=latest
+        if [[ "${2:-}" == list || "${2:-}" =~ ${BACKUP_NAME_RE} ]]; then
+          RESTORE="$2"
+          shift
+        fi
+        ;;
       --debug) DEBUG=1 ;;
       --no-log) LOGGING=0 ;;
       -h | --help) usage; exit 0 ;;
@@ -182,10 +200,33 @@ want_menu() {
   ((!ASSUME_YES && !DRY_RUN && !FLAGS_USED)) && menu_available
 }
 
+# --restore: no menu, no steps. A real restore needs a terminal or --yes,
+# like a run, and takes the run lock.
+run_restore() {
+  if [[ "${RESTORE}" == list ]]; then
+    print_backups
+    return 0
+  fi
+  if ((!ASSUME_YES && !DRY_RUN)) && ! have_tty; then
+    die "no terminal to ask 'Go ahead?': pass --yes to restore unattended, or --dry-run to see the files"
+  fi
+  trap cleanup EXIT
+  if ((!DRY_RUN)); then
+    private_dir "${TARGET_HOME}/.local/bootstrap" >/dev/null || true
+    take_lock "${TARGET_HOME}/.local/bootstrap/lock"
+    BACKUP_DIR="$(new_backup_dir)"
+  fi
+  restore_backup "${RESTORE}" || die "some files were not restored"
+}
+
 main() {
   parse_args "$@"
   ((!DEBUG)) || set -x
   local family menu=0
+  if [[ -n "${RESTORE}" ]]; then
+    run_restore
+    return
+  fi
   family="$(detect_family)"
   info "install $(source_version), bash ${BASH_VERSION}"
   info "Detected distro family: ${family}"
@@ -214,6 +255,7 @@ main() {
   apply_flag_overrides
   print_plan "${family}"
   confirm "Go ahead?" || { info "Nothing saved, nothing installed."; return 0; }
+  ((DRY_RUN)) || BACKUP_DIR="$(new_backup_dir)"
   if ((menu)); then
     config_save "${CONFIG_FILE}" || die "cannot save ${CONFIG_FILE}; nothing installed"
     ok "Selection saved to ${CONFIG_FILE}"
