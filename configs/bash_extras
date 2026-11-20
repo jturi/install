@@ -3,14 +3,88 @@
 # Only plain aliases + tiny portable helpers (no fzf, eza, python deps,
 # no 1-char names). macOS + Linux only: no GNU-only flags except behind
 # feature checks.
+#
+# Groups: lines between `# @group <name>` and `# @end` belong to the alias
+# group <name> in catalog.txt (aliases.<name>). setup.sh copies only the
+# groups ticked in the menu to ~/.bash_extras; lines outside a group (ref,
+# alg) are always copied. Groups do not nest.
 
-# --- navigation ---
-alias ref='source ~/.bashrc && echo "Reloaded ~/.bashrc"'
+# --- always: reload, alias search ---
+# ref: reload everything (profile, rc, aliases, PATH) by starting a fresh login
+# shell of the same kind. Sourcing the rc again would add each PATH line twice
+# and skip ~/.zprofile / ~/.bash_profile (where Homebrew's PATH is set).
+# A same-name alias (e.g. from ~/.bash_aliases) would make each function
+# definition below a parse error, so drop it first.
+unalias ref refa alg _need 2>/dev/null || true
+ref() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        fc -AI 2>/dev/null # keep this session's history
+        echo "Reloading zsh (login shell)"
+        exec zsh -l
+    else
+        history -a
+        echo "Reloading bash (login shell)"
+        exec bash -l
+    fi
+}
+# refa: apply the install repo again (menu, then install), reload tmux's
+# config when a tmux server runs, then reload the shell (ref). The repo is
+# $INSTALL_DIR, else ~/repos/install, else ~/install (bootstrap's default).
+refa() {
+  local dir="" d
+  for d in "${INSTALL_DIR:-}" "$HOME/repos/install" "$HOME/install"; do
+    if [ -n "$d" ] && [ -f "$d/Makefile" ] && [ -f "$d/setup.sh" ]; then dir="$d"; break; fi
+  done
+  [ -n "$dir" ] || { echo "refa: install repo not found (set INSTALL_DIR)" >&2; return 1; }
+  echo "refa: make install in $dir"
+  make --no-print-directory -C "$dir" install || { echo "refa: make install failed; shell not reloaded" >&2; return 1; }
+  if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1 && [ -f "$HOME/.tmux.conf" ]; then
+    tmux source-file "$HOME/.tmux.conf" && echo "refa: reloaded ~/.tmux.conf"
+  fi
+  ref
+}
+# alg <pat>: grep loaded aliases + matching function names.
+# `alias` prints name=value lines, so `alg psmem` shows its line.
+# Colors only when stdout is a terminal (not piped or redirected) and
+# NO_COLOR is unset (https://no-color.org).
+alg() {
+  [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
+  local color=never
+  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
+  alias | grep -i --color="${color}" -- "$*" || true
+  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
+}
+
+# GNU make 4 from Homebrew ahead of macOS's make 3.81 (some Makefiles need 4+),
+# in bash and zsh. $HOMEBREW_PREFIX comes from `brew shellenv` (~/.zprofile);
+# the fixed prefixes cover shells that did not run it. No brew call: it would
+# slow every shell start. Added once, so re-sourcing does not repeat it.
+for _gm in "${HOMEBREW_PREFIX:-/opt/homebrew}" /usr/local; do
+  if [ -d "$_gm/opt/make/libexec/gnubin" ]; then
+    case ":$PATH:" in *":$_gm/opt/make/libexec/gnubin:"*) ;; *) PATH="$_gm/opt/make/libexec/gnubin:$PATH" ;; esac
+    break
+  fi
+done
+unset _gm
+
+# _need <tool>: fail with a hint (exit 127) when <tool> is not installed.
+_need() { command -v "$1" >/dev/null 2>&1 || { echo "$1 is not installed" >&2; return 127; }; }
+
+# @group nav
+unalias up mkcd lt ltt 2>/dev/null || true # a same-name alias breaks the function definitions below
+# --- navigation and listing ---
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
 alias cd1='cd ..'
 alias cd2='cd ../..'
 alias cd3='cd ../../..'
+# up [n]: go up n directories (default 1).
+up() {
+  local n="${1:-1}" d=""
+  case "$n" in ''|*[!0-9]*) echo "usage: up [levels]" >&2; return 1 ;; esac
+  while [ "$n" -gt 0 ]; do d="${d}../"; n=$((n - 1)); done
+  cd "${d:-.}" || return
+}
 
 # mkcd <dir>: mkdir -p + cd.
 mkcd() {
@@ -53,7 +127,10 @@ ltt() {
   ((${#files[@]})) || return 0
   ls -lthd -- "${files[@]}"
 }
+# @end
 
+# @group tmux
+unalias tm tmuxhelp 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- tmux ---
 
 alias ta='tmux attach || tmux new'
@@ -87,13 +164,18 @@ tmuxhelp() {
     "$HOME/.local/bin/tmuxhelp.sh" "$@"
   fi
 }
+# @end
 
+# @group git
+unalias glast 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- git status/diff ---
 alias gs='git status'
 alias gst='git status'
 alias gss='git status --short'
 alias gd='git diff'
 alias gds='git diff --staged'
+alias gdw='git diff --word-diff' # word-level diff
+alias gstat='git diff --stat'
 alias gdry='git clean -ndf'
 
 # --- git add/commit ---
@@ -121,16 +203,36 @@ alias gl="git log --all --graph --decorate --color --pretty=format:'%C(yellow)%h
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
+alias gwho='git log -1 --format="Author: %an <%ae>%nDate:   %ad%nCommit: %h %s"'
+alias ghash='git rev-parse --short HEAD'
+# glast [n]: the last n commits (default 1) with the files they changed.
+glast() { git log --stat --format='%C(yellow)%h%C(reset) %s %C(dim)(%cr, %an)%C(reset)' -n "${1:-1}"; }
+
+# --- git merge/rebase/cherry-pick ---
+alias gm='git merge'
+alias gmff='git merge --ff-only'
+alias gma='git merge --abort'
+alias grb='git rebase'
+alias grba='git rebase --abort'
+alias grbc='git rebase --continue'
+alias gcp='git cherry-pick'
+alias grev='git revert' # new commit that undoes an old one
 
 # --- git extras ---
 alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
 alias groot='git rev-parse --show-toplevel'
 alias gstash='git stash'
 alias gpop='git stash pop'
+alias gsl='git stash list --date=relative'
+alias grl='git reflog'
+alias gbd='git branch -d' # delete a merged branch
+alias gbg='git branch -vv | grep ": gone]"' # branches whose upstream is gone
+alias gtrack='git branch --set-upstream-to=origin/$(git rev-parse --abbrev-ref HEAD)'
+# @end
 
-# --- more keepers (macOS + Linux) ---
-
-# --- sudo/processes  ---
+# @group system
+unalias again psg killport duh 2>/dev/null || true # a same-name alias breaks the function definitions below
+# --- sudo/processes ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
 # again: rerun the previous command as root (fc is POSIX; works in bash+zsh,
 # unlike !! inside aliases which only bash expands). `fc -ln -1` prints the
@@ -180,7 +282,10 @@ duh() {
     printf "%6.1f%s\t%s\n", s, u, $2 }'
   if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
 }
+# @end
 
+# @group network
+unalias down serve 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- network/download ---
 # myip: public IP (curl ships on both; matches dotfiles myip).
 alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
@@ -198,7 +303,10 @@ down() {
 # serve [port]: loopback-only static server from stdlib python3.
 serve() { python3 -m http.server "${1:-8000}" --bind 127.0.0.1; }
 alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
+# @end
 
+# @group files
+unalias extract 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- files/archives ---
 alias md='mkdir -p'
 # extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
@@ -213,18 +321,192 @@ extract() {
     *) echo "extract: unknown format: $1" >&2; return 1 ;;
   esac
 }
+# @end
 
+# @group search
+unalias hgrep 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- search ---
 # hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
-# alg <pat>: grep loaded aliases + matching function names.
-# `alias` prints name=value lines, so `alg psmem` shows its line.
-# Colors only when stdout is a terminal (not piped or redirected) and
-# NO_COLOR is unset (https://no-color.org).
-alg() {
-  [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
-  local color=never
-  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
-  alias | grep -i --color="${color}" -- "$*" || true
-  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
+# @end
+
+# @group clipboard
+# --- copy to the clipboard ---
+unalias _clip pwdc catc clip clipp lastc sshpubc gbrc ghashc 2>/dev/null || true # a same-name alias breaks the function definitions below
+# _clip: stdin to the system clipboard. macOS pbcopy, Wayland wl-copy, X11
+# xclip/xsel, WSL clip.exe, then tmux's buffer (-w also sets the terminal
+# clipboard), then OSC 52 (works over SSH in most terminals).
+_clip() {
+  local t
+  t="$(cat)"
+  if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$t" | pbcopy && return
+  elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then printf '%s' "$t" | wl-copy && return
+  elif [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then printf '%s' "$t" | xclip -selection clipboard -in && return
+  elif [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then printf '%s' "$t" | xsel --clipboard --input && return
+  elif command -v clip.exe >/dev/null 2>&1; then printf '%s' "$t" | clip.exe && return
+  fi
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then tmux set-buffer -w -- "$t" && return; fi
+  if [ -t 2 ]; then printf '\033]52;c;%s\a' "$(printf '%s' "$t" | base64 | tr -d '\n')" >&2 && return; fi
+  echo "no clipboard found (pbcopy, wl-copy, xclip, xsel, clip.exe, tmux)" >&2
+  return 1
 }
+# pwdc: copy the current directory's path.
+pwdc() { printf '%s' "$PWD" | _clip && echo "copied: $PWD"; }
+# catc <file>: copy a file's contents (no file: stdin).
+catc() {
+  if [ $# -eq 0 ]; then _clip; return; fi
+  [ -f "$1" ] || { echo "catc: not a file: $1" >&2; return 1; }
+  _clip <"$1" && echo "copied: $1 ($(wc -l <"$1" | tr -d ' ') lines)"
+}
+# clip [text...]: copy the arguments, or stdin (`cmd | clip`).
+clip() { if [ $# -gt 0 ]; then printf '%s' "$*" | _clip; else _clip; fi; }
+# clipp: print the clipboard.
+clipp() {
+  if command -v pbpaste >/dev/null 2>&1; then pbpaste
+  elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null 2>&1; then wl-paste
+  elif [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then xclip -selection clipboard -out
+  elif [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then xsel --clipboard --output
+  elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command Get-Clipboard | tr -d '\r'
+  elif [ -n "${TMUX:-}" ]; then tmux show-buffer
+  else echo "clipp: no clipboard reader found" >&2; return 1; fi
+}
+# lastc: copy the previous command line.
+lastc() {
+  local c
+  c="$(fc -ln -1)"
+  c="${c#"${c%%[![:space:]]*}"}"
+  printf '%s' "$c" | _clip && echo "copied: $c"
+}
+# sshpubc: copy your SSH public key (to paste into GitHub, a server, ...).
+sshpubc() {
+  local k
+  for k in ~/.ssh/id_ed25519.pub ~/.ssh/id_ecdsa.pub ~/.ssh/id_rsa.pub; do
+    [ -f "$k" ] && { _clip <"$k" && echo "copied: $k"; return; }
+  done
+  echo "sshpubc: no public key in ~/.ssh" >&2
+  return 1
+}
+# gbrc / ghashc: copy the current git branch / short commit hash.
+gbrc() { local b; b="$(git branch --show-current)" && [ -n "$b" ] && printf '%s' "$b" | _clip && echo "copied: $b"; }
+ghashc() { local h; h="$(git rev-parse --short HEAD)" && printf '%s' "$h" | _clip && echo "copied: $h"; }
+# @end
+
+# @group edit
+# --- edit config files in $EDITOR (default nano) ---
+# Files that setup installs (tmux.conf, zshrc, nanorc, kitty, Ghostty) are
+# replaced on the next run (the old one is kept as .bak.<time>); for lasting
+# changes edit configs/ in the install repo. ~/.bash_aliases is yours: setup
+# then installs its own copy as ~/.bash_aliases2.
+unalias _edit ebashrc ezshrc ebashprofile ezprofile ealiases etmux essh eknown ecrontab egitconfig egit enano evim einputrc eenv ehosts ekitty eghostty 2>/dev/null || true # a same-name alias breaks the function definitions below
+_edit() { "${EDITOR:-nano}" "$@"; }
+ebashrc() { _edit ~/.bashrc && echo "run ref to reload"; }
+ezshrc() { _edit ~/.zshrc && echo "run ref to reload"; }
+ebashprofile() { _edit ~/.bash_profile && echo "run ref to reload"; }
+ezprofile() { _edit ~/.zprofile && echo "run ref to reload"; }
+ealiases() { _edit ~/.bash_aliases && echo "run ref to reload"; }
+# etmux: edit ~/.tmux.conf, then reload it in a running tmux server.
+etmux() {
+  _edit ~/.tmux.conf || return
+  if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1; then
+    tmux source-file ~/.tmux.conf && echo "reloaded ~/.tmux.conf"
+  fi
+}
+# essh: edit ~/.ssh/config; creates it private (700 dir, 600 file).
+essh() {
+  [ -d ~/.ssh ] || mkdir -m 700 ~/.ssh
+  [ -f ~/.ssh/config ] || { : >~/.ssh/config && chmod 600 ~/.ssh/config; }
+  _edit ~/.ssh/config
+}
+# eknown: ~/.ssh/known_hosts (remove a stale host key line).
+eknown() { _edit ~/.ssh/known_hosts; }
+# ecrontab: your crontab in the same editor; cron installs it on save.
+ecrontab() { _need crontab || return; local ed="${EDITOR:-nano}"; EDITOR="$ed" VISUAL="$ed" crontab -e; }
+egitconfig() { _edit ~/.gitconfig; }
+# egit: this repository's .git/config.
+egit() { local g; g="$(git rev-parse --git-dir)" || return; _edit "$g/config"; }
+enano() { _edit ~/.nanorc; }
+evim() { _edit ~/.vimrc; }
+einputrc() { _edit ~/.inputrc; }
+# eenv: edit ~/.env and keep it readable by you only (600).
+eenv() {
+  [ -f ~/.env ] || { : >~/.env && chmod 600 ~/.env; }
+  _edit ~/.env || return
+  chmod 600 ~/.env
+}
+# ehosts: edit /etc/hosts as root (sudoedit: your editor, root writes the file).
+ehosts() { SUDO_EDITOR="${EDITOR:-nano}" sudo -e /etc/hosts; }
+ekitty() { _edit ~/.config/kitty/kitty.conf; }
+eghostty() {
+  if [ "$(uname -s)" = Darwin ]; then _edit "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  else _edit ~/.config/ghostty/config; fi
+}
+# @end
+
+# @group docker
+unalias d dc dcu dcd dcr dcl dps dpsa dport di dlog dexec dmounts dprune 2>/dev/null || true # a same-name alias breaks the function definitions below
+# --- docker and compose ---
+# Functions, not aliases: without docker they say so (exit 127) instead of
+# `command not found`, and they take extra arguments.
+d() { _need docker || return; command docker "$@"; }
+dc() { _need docker || return; command docker compose "$@"; }
+dcu() { _need docker || return; command docker compose up -d "$@"; }
+dcd() { _need docker || return; command docker compose down "$@"; }
+dcr() { _need docker || return; command docker compose restart "$@"; }
+dcl() { _need docker || return; command docker compose logs -f --tail 50 "$@"; }
+dps() { _need docker || return; command docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' "$@"; }
+dpsa() { _need docker || return; command docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' "$@"; }
+dport() { _need docker || return; command docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' "$@"; }
+di() { _need docker || return; command docker images "$@"; }
+dlog() { _need docker || return; command docker logs -f --tail 100 "$@"; }
+# dexec <container> [cmd]: shell into a container (default sh).
+dexec() {
+  _need docker || return
+  [ $# -ge 1 ] || { echo "usage: dexec <container> [command]" >&2; return 1; }
+  local c="$1"; shift
+  [ $# -gt 0 ] || set -- sh
+  command docker exec -it "$c" "$@"
+}
+dmounts() { _need docker || return; command docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.Type}}, rw={{.RW}}){{println}}{{end}}' "$@"; }
+# dprune: show disk use, ask, then remove stopped containers, dangling images
+# and unused networks (volumes are kept).
+dprune() {
+  _need docker || return
+  command docker system df
+  local a
+  printf 'Remove stopped containers, dangling images, unused networks? [y/N] '
+  read -r a
+  case "$a" in [yY]*) command docker system prune -f "$@" ;; *) echo "kept" ;; esac
+}
+# @end
+
+# @group kubectl
+unalias k kgp kgs kgd kga kl kd kdel kctx kns 2>/dev/null || true # a same-name alias breaks the function definitions below
+# --- kubectl (generic; no cluster-specific names) ---
+k() { _need kubectl || return; command kubectl "$@"; }
+kgp() { k get pods "$@"; }
+kgs() { k get svc "$@"; }
+kgd() { k get deployments "$@"; }
+kga() { k get all "$@"; }
+kl() { k logs -f --tail 100 "$@"; }
+kd() { k describe "$@"; }
+kdel() { k delete "$@"; }
+kctx() { k config current-context; }
+# kns [namespace]: show or set the namespace of the current context.
+kns() {
+  if [ $# -eq 0 ]; then k config view --minify --output 'jsonpath={..namespace}'; echo
+  else k config set-context --current --namespace="$1"; fi
+}
+# @end
+
+# @group github
+unalias gh_ ghpc ghpv ghpd ghco ghck ghst ghweb 2>/dev/null || true # a same-name alias breaks the function definitions below
+# --- GitHub CLI (gh) ---
+gh_() { _need gh || return; command gh "$@"; }
+ghpc() { gh_ pr create --fill "$@"; }   # PR from the current branch
+ghpv() { gh_ pr view --comments "$@"; } # PR body and review threads
+ghpd() { gh_ pr diff "$@"; }
+ghco() { gh_ pr checkout "$@"; }        # ghco <number>
+ghck() { gh_ pr checks "$@"; }          # CI checks of this branch's PR
+ghst() { gh_ status "$@"; }
+ghweb() { gh_ browse "$@"; }
+# @end

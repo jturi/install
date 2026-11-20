@@ -66,7 +66,7 @@ check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
 check macos-bash-completion "bash-completion@2" "$(pkg_name macos bash-completion)"
-check macos-package-list "tmux vim nano bash bash-completion@2 fzf htop git wget rsync tree jq" "$(load_catalog macos; config_load "${WORK}/none"; selected_packages macos | xargs)"
+check macos-package-list "tmux vim nano bash bash-completion@2 fzf htop make git wget rsync tree jq" "$(load_catalog macos; config_load "${WORK}/none"; selected_packages macos | xargs)"
 
 # Catalog parsing and platform filtering.
 FIXTURE="${ROOT}/tests/fixtures/catalog.txt"
@@ -143,7 +143,7 @@ ah="${WORK}/alias_home"
 mkdir -p "${ah}"
 TARGET_HOME="${ah}" install_aliases >/dev/null
 check aliases-created "same" "$(cmp -s "${ROOT}/configs/bash_aliases" "${ah}/.bash_aliases" && echo same)"
-check extras-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah}/.bash_extras" && echo same)"
+check extras-created "same" "$(cmp -s <(filter_alias_groups "${ROOT}/configs/bash_extras") "${ah}/.bash_extras" && echo same)"
 check origin-created "same" "$(cmp -s "${ROOT}/configs/bash_show_origin" "${ah}/.bash_show_origin" && echo same)"
 check aliases2-not-created "" "$(ls "${ah}/.bash_aliases2" 2>/dev/null)"
 check loader-in-bashrc "1" "$(grep -c 'source ~/.bash_extras' "${ah}/.bashrc")"
@@ -155,6 +155,72 @@ check origin-loader-not-duplicated "1" "$(grep -c 'source ~/.bash_show_origin' "
 check aliases-rerun-no-backup "0" "$(find "${ah}" -maxdepth 1 -name '*.bak.*' | wc -l | tr -d ' ')"
 # Loader sources every file in order: extras before origin (origin hooks the prompt, so it loads last).
 check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
+
+# Alias groups: only ticked groups reach ~/.bash_extras; lines outside a group
+# (ref, alg, _need) always do. Defaults: docker on, kubectl and github off.
+gh_home="${WORK}/group_home"
+mkdir -p "${gh_home}"
+printf 'aliases.docker=0\naliases.github=1\n' >"${WORK}/groups.cfg"
+( TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/groups.cfg"; install_aliases arch >/dev/null )
+check groups-git-kept "1" "$(grep -cx '# @group git' "${gh_home}/.bash_extras")"
+check groups-docker-dropped "0" "$(grep -c 'dps()' "${gh_home}/.bash_extras")"
+check groups-kubectl-default-off "0" "$(grep -c '^k()' "${gh_home}/.bash_extras")"
+check groups-github-on "1" "$(grep -c '^ghpc()' "${gh_home}/.bash_extras")"
+check groups-always-kept "3" "$(grep -cE '^(ref|alg|_need)\(\)' "${gh_home}/.bash_extras")"
+check groups-balanced "0" "$(awk '/^# @group /{o++} /^# @end/{o--} END{print o}' "${gh_home}/.bash_extras")"
+check groups-parse "ok" "$(bash -n "${gh_home}/.bash_extras" && echo ok)"
+check groups-check-ok "OK" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/groups.cfg"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.git ]] || check_item arch "${i}"; done)"
+check groups-check-missing "MISSING" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/none"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.docker ]] || check_item arch "${i}"; done)"
+printf 'configs.aliases=0\n' >"${WORK}/noaliases.cfg"
+check groups-check-needs-aliases "SKIPPED needs Shell aliases (configs)" "$(TARGET_HOME="${gh_home}"; load_catalog arch; config_load "${WORK}/noaliases.cfg"; for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do [[ "$(catalog_key "${i}")" != aliases.git ]] || check_item arch "${i}"; done)"
+# Every group in bash_extras has a catalog item, and every catalog item a group.
+check groups-match-catalog "same" "$(diff <(grep -o '^# @group [a-z-]*' "${ROOT}/configs/bash_extras" | cut -d' ' -f3 | sort) <(grep '^aliases|' "${ROOT}/catalog.txt" | grep -v windows | cut -d'|' -f2 | sort) >/dev/null && echo same)"
+# refa: make install in $INSTALL_DIR, then ref; a failed install skips ref.
+ra="${WORK}/refa_repo"
+mkdir -p "${ra}" && touch "${ra}/setup.sh"
+printf 'install:\n\t@echo installed\n' >"${ra}/Makefile"
+check refa-runs "installed reloaded" "$(INSTALL_DIR="${ra}" HOME="${WORK}/refa_home" bash -c 'source "$0"; ref() { echo reloaded; }; refa' "${ROOT}/configs/bash_extras" 2>/dev/null | grep -v '^refa:' | xargs)"
+printf 'install:\n\t@false\n' >"${ra}/Makefile"
+check refa-fail-no-reload "1" "$(INSTALL_DIR="${ra}" HOME="${WORK}/refa_home" bash -c 'source "$0"; ref() { echo reloaded; }; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
+check refa-no-repo "1" "$(INSTALL_DIR="" HOME="${WORK}/refa_home" bash -c 'source "$0"; refa >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
+
+# A same-name alias loaded earlier (~/.bash_aliases) must not break the
+# function definitions: every function in bash_extras is unaliased first.
+check extras-survive-user-aliases "function function function" "$(bash -c 'shopt -s expand_aliases; for n in $(grep -oE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$0" | tr -d "()"); do alias "$n=true"; done; source "$0" && type -t dps up refa | xargs' "${ROOT}/configs/bash_extras" 2>&1)"
+# GNU make's gnubin first on PATH from $HOMEBREW_PREFIX, once even when re-sourced.
+gm_pre="${WORK}/brewpre"
+mkdir -p "${gm_pre}/opt/make/libexec/gnubin"
+check extras-gnubin-first "${gm_pre}/opt/make/libexec/gnubin" "$(HOMEBREW_PREFIX="${gm_pre}" bash -c 'source "$0"; source "$0"; printf "%s\n" "${PATH%%:*}"' "${ROOT}/configs/bash_extras")"
+check extras-gnubin-once "1" "$(HOMEBREW_PREFIX="${gm_pre}" bash -c 'source "$0"; source "$0"; printf "%s\n" "$PATH" | tr ":" "\n" | grep -cxF "$HOMEBREW_PREFIX/opt/make/libexec/gnubin"' "${ROOT}/configs/bash_extras")"
+check extras-gnubin-zsh-free "0" "$(grep -c 'brew --prefix' "${ROOT}/configs/zshrc" "${ROOT}/configs/bash_extras" | awk -F: '{s+=$2} END {print s}')"
+check extras-kd-kdel "describe delete" "$(bash -c 'source "$0"; k() { echo "$1"; }; echo "$(kd) $(kdel)"' "${ROOT}/configs/bash_extras")"
+# With RUN_DIR (a real run), the filtered copy lives there and is removed.
+rd_home="${WORK}/rundir_home"
+mkdir -p "${rd_home}" "${WORK}/rundir"
+check extras-tmp-in-run-dir "0" "$(TARGET_HOME="${rd_home}"; RUN_DIR="${WORK}/rundir"; install_aliases >/dev/null; find "${RUN_DIR}" -mindepth 1 | wc -l | tr -d ' ')"
+# Clipboard group: a fake pbcopy records what would be copied.
+cb_bin="${WORK}/cbbin"
+mkdir -p "${cb_bin}"
+printf '#!/bin/sh\ncat >"%s/copied"\n' "${WORK}" >"${cb_bin}/pbcopy" && chmod +x "${cb_bin}/pbcopy"
+check clip-pwdc "${WORK}" "$(cd "${WORK}" && PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; pwdc >/dev/null' "${ROOT}/configs/bash_extras"; cat "${WORK}/copied")"
+check clip-args "a b" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; clip a b' "${ROOT}/configs/bash_extras"; cat "${WORK}/copied")"
+check clip-catc "$(head -n 1 "${ROOT}/README.md")" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; catc "$1" >/dev/null' "${ROOT}/configs/bash_extras" "${ROOT}/README.md"; head -n 1 "${WORK}/copied")"
+check clip-catc-missing "1" "$(PATH="${cb_bin}:${PATH}" bash -c 'source "$0"; catc /nonexistent 2>/dev/null; echo $?' "${ROOT}/configs/bash_extras")"
+# Edit group: $EDITOR gets the right file; essh and eenv create private files.
+ed_home="${WORK}/edit_home"
+mkdir -p "${ed_home}"
+check edit-ebashrc "${ed_home}/.bashrc" "$(HOME="${ed_home}" EDITOR=echo bash -c 'source "$0"; ebashrc' "${ROOT}/configs/bash_extras" | head -n 1)"
+check edit-etmux "${ed_home}/.tmux.conf" "$(HOME="${ed_home}" EDITOR=echo PATH=/usr/bin:/bin bash -c 'source "$0"; etmux' "${ROOT}/configs/bash_extras" | head -n 1)"
+check edit-eknown "${ed_home}/.ssh/known_hosts" "$(HOME="${ed_home}" EDITOR=echo bash -c 'source "$0"; eknown' "${ROOT}/configs/bash_extras")"
+cr_bin="${WORK}/crbin"
+mkdir -p "${cr_bin}"
+printf '#!/bin/sh\necho "$EDITOR $*"\n' >"${cr_bin}/crontab" && chmod +x "${cr_bin}/crontab"
+check edit-ecrontab "nano -e" "$(env -u EDITOR PATH="${cr_bin}:${PATH}" bash -c 'source "$0"; ecrontab' "${ROOT}/configs/bash_extras")"
+HOME="${ed_home}" EDITOR=true bash -c 'source "$0"; essh; eenv' "${ROOT}/configs/bash_extras"
+check edit-essh-private "600" "$(stat -c %a "${ed_home}/.ssh/config" 2>/dev/null || stat -f %Lp "${ed_home}/.ssh/config")"
+check edit-eenv-private "600" "$(stat -c %a "${ed_home}/.env" 2>/dev/null || stat -f %Lp "${ed_home}/.env")"
+# The docker helpers say what is missing instead of `command not found`.
+check groups-need-docker "127" "$(bash -c 'source "$0"; PATH=/nonexistent; dps >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 
 # Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
 # on macOS (login shells) an existing ~/.bash_profile gets the loader (backed
@@ -170,7 +236,7 @@ check loader-in-profile "1" "$(grep -c 'source ~/.bash_aliases2' "${ah2}/.bash_p
 check profile-backup "# profile" "$(cat "${ah2}"/.bash_profile.bak.*)"
 check bashrc-untouched "" "$(ls "${ah2}/.bashrc" 2>/dev/null)"
 check loader-works "mine" "$(HOME="${ah2}" bash -c 'shopt -s expand_aliases; source ~/.bash_profile; alias mine >/dev/null && echo mine')"
-check extras2-created "same" "$(cmp -s "${ROOT}/configs/bash_extras" "${ah2}/.bash_extras" && echo same)"
+check extras2-created "same" "$(cmp -s <(filter_alias_groups "${ROOT}/configs/bash_extras") "${ah2}/.bash_extras" && echo same)"
 check zshrc-loads-aliases "1" "$(grep -c 'source ~/.bash_aliases2' "${ROOT}/configs/zshrc")"
 check zshrc-loads-extras "1" "$(grep -c 'source ~/.bash_extras' "${ROOT}/configs/zshrc")"
 check zshrc-loads-origin "1" "$(grep -c 'source ~/.bash_show_origin' "${ROOT}/configs/zshrc")"

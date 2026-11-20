@@ -190,8 +190,7 @@ pkg_name() {
     macos:less | macos:man-db | macos:sudo | macos:procps | macos:lsof | macos:which | \
       macos:file | macos:diffutils | macos:openssh-client | macos:openssh-server | \
       macos:curl | macos:iproute2 | macos:iputils | macos:dnsutils | \
-      macos:ca-certificates | macos:zsh | macos:tar | macos:gzip | macos:zip | macos:unzip | \
-      macos:make) ;;
+      macos:ca-certificates | macos:zsh | macos:tar | macos:gzip | macos:zip | macos:unzip) ;;
     macos:bash-completion) echo bash-completion@2 ;;
     *) echo "${pkg}" ;;
   esac
@@ -479,14 +478,19 @@ ensure_brew() {
     ((ASSUME_YES)) && export NONINTERACTIVE=1
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
-  if ! command -v brew >/dev/null 2>&1 && [[ -x "${brew_bin}" ]]; then
-    eval "$("${brew_bin}" shellenv)"
-    local line="eval \"\$(${brew_bin} shellenv)\""
-    if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
-      info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
-      backup_file "${TARGET_HOME}/.zprofile"
-      printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
+  [[ -x "${brew_bin}" ]] || return 0
+  command -v brew >/dev/null 2>&1 || eval "$("${brew_bin}" shellenv)"
+  # Always, even when brew is already on PATH: /etc/paths.d puts Homebrew after
+  # /bin, so without this line macOS's bash 3.2 and make 3.81 win in new shells.
+  local line="eval \"\$(${brew_bin} shellenv)\""
+  if ! grep -qsF "${line}" "${TARGET_HOME}/.zprofile"; then
+    info "Adding Homebrew to ${TARGET_HOME}/.zprofile"
+    if ((DRY_RUN)); then
+      printf '   [dry-run] append to %s: %s\n' "${TARGET_HOME}/.zprofile" "${line}"
+      return 0
     fi
+    backup_file "${TARGET_HOME}/.zprofile"
+    printf '\n%s\n' "${line}" >>"${TARGET_HOME}/.zprofile"
   fi
 }
 
@@ -958,10 +962,27 @@ bash_rc_file() {
   fi
 }
 
+# Print alias file $1 with only the ticked alias groups: a block from
+# `# @group <name>` to `# @end` is kept when aliases.<name> is selected.
+# Lines outside any block are always kept; so are the marker lines of a kept
+# block, which check_item looks for.
+filter_alias_groups() {
+  local src="$1" keep=" " i
+  for ((i = 0; i < ${#CAT_ITEM[@]}; i++)); do
+    [[ "${CAT_GROUP[i]}" == "aliases" ]] || continue
+    if item_selected "aliases.${CAT_ITEM[i]}"; then keep="${keep}${CAT_ITEM[i]} "; fi
+  done
+  awk -v keep="${keep}" '
+    /^# @group [A-Za-z0-9_-]+[[:space:]]*$/ { g = $3; drop = (index(keep, " " g " ") == 0) }
+    !drop { print }
+    /^# @end[[:space:]]*$/ { drop = 0 }
+  ' "${src}"
+}
+
 # Install configs/bash_aliases as ~/.bash_aliases, or as ~/.bash_aliases2 when
 # the user already has their own ~/.bash_aliases. Then make bash load all
-# alias files. configs/bash_extras and configs/bash_show_origin always install
-# as ~/.bash_extras and ~/.bash_show_origin.
+# alias files. configs/bash_extras installs as ~/.bash_extras with only the
+# ticked alias groups; configs/bash_show_origin as ~/.bash_show_origin.
 install_aliases() {
   local family="${1:-}"
   local src="${SCRIPT_DIR}/configs/bash_aliases"
@@ -973,7 +994,13 @@ install_aliases() {
     dst="${TARGET_HOME}/.bash_aliases2"
   fi
   install_file "${src}" "${dst}"
-  install_file "${extra_src}" "${TARGET_HOME}/.bash_extras"
+  # The filtered copy goes in RUN_DIR, which the exit trap removes even when
+  # install_file dies; without RUN_DIR (direct calls) a mktemp file is used.
+  local extra_tmp
+  if [[ -n "${RUN_DIR}" && -d "${RUN_DIR}" ]]; then extra_tmp="${RUN_DIR}/bash_extras"; else extra_tmp="$(mktemp)"; fi
+  filter_alias_groups "${extra_src}" >"${extra_tmp}"
+  install_file "${extra_tmp}" "${TARGET_HOME}/.bash_extras"
+  rm -f "${extra_tmp}"
   install_file "${origin_src}" "${TARGET_HOME}/.bash_show_origin"
 
   local rc
@@ -1212,6 +1239,11 @@ check_item() {
       if [[ -f "${h}/.bash_extras" && -f "${h}/.bash_show_origin" ]] &&
         [[ -f "${h}/.bash_aliases" || -f "${h}/.bash_aliases2" ]] &&
         grep -qsF 'source ~/.bash_extras' "${rc}"; then echo OK; else echo MISSING; fi
+      ;;
+    aliases.*)
+      if ! item_selected configs.aliases; then echo "SKIPPED needs Shell aliases (configs)"
+      elif grep -qsxF "# @group ${CAT_ITEM[i]}" "${h}/.bash_extras"; then echo OK
+      else echo MISSING; fi
       ;;
     configs.bin)
       for f in "${SCRIPT_DIR}"/configs/bin/*; do

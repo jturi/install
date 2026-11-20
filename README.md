@@ -144,7 +144,8 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      `configs/windows/profile.ps1` to
      `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
      `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real
-     Documents folder, also when OneDrive moved it).
+     Documents folder, also when OneDrive moved it), with only the ticked
+     alias groups (see Alias groups).
    - **AutoHotkey hotkeys**: installs AutoHotkey v2
      (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk`
      to `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
@@ -241,10 +242,16 @@ package manager:
   `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`.
   It asks for your password and installs the Xcode Command Line Tools.
   With `--yes` it sets `NONINTERACTIVE=1`.
-- After the install it adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`.
+- It adds `eval "$(<prefix>/bin/brew shellenv)"` to `~/.zprofile`, also when
+  brew is already on PATH: macOS's `/etc/paths.d` puts Homebrew after `/bin`,
+  so without it new shells get the system bash 3.2 and make 3.81.
 - macOS already has less, curl, ssh, lsof, file, tar, zip and the other base
   tools, so brew installs only: tmux, vim, nano, bash (5.x), bash-completion@2,
-  fzf, htop, git, wget, rsync, tree, jq.
+  fzf, htop, make, git, wget, rsync, tree, jq.
+- `~/.bash_extras` (bash and zsh) puts Homebrew's GNU make
+  (`<prefix>/opt/make/libexec/gnubin`) ahead of the system make, so `make` is
+  make 4. It uses `$HOMEBREW_PREFIX`, else `/opt/homebrew` or `/usr/local`,
+  without calling `brew`.
 - `bash-completion@2` needs bash 4.2 or newer, so the `bash 5 (Homebrew)` item
   is on by default. The alias loader sources
   `$HOMEBREW_PREFIX/etc/profile.d/bash_completion.sh` in bash only (zsh
@@ -348,10 +355,57 @@ only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 `gundo`/`groot`/`gstash`/`gpop`. Both bash and zsh load both files (extras last, so
 `m` can use `tm`).
 
+### Alias groups
+
+The menu has an **aliases** group with one item per section of
+`configs/bash_extras`. Only the ticked ones reach `~/.bash_extras`:
+
+| Item | Default | What |
+|------|---------|------|
+| nav | on | `up`, `mkcd`, `lt`, `ltt`, `cd1`..`cd3`, `dow`, `rep` |
+| tmux | on | `tm`, `m`, `ta`, `tl`, `tn`, `tkill`, `tmuxhelp` |
+| git | on | status/diff, add/commit, sync, log, merge/rebase/cherry-pick, stash |
+| system | on | `sudo2`, `again`, `psg`, `psmem`, `pscpu`, `killport`, `ports`, `dfh`, `duh` |
+| network | on | `myip`, `down`, `serve`, `ping5` |
+| files | on | `md`, `extract` |
+| search | on | `hgrep` |
+| clipboard | on | `pwdc` (copy current path), `catc <file>` (copy a file), `clip [text]` / `cmd \| clip`, `clipp` (print the clipboard), `lastc` (copy the last command), `sshpubc` (copy your SSH public key), `gbrc` / `ghashc` (copy git branch / hash) |
+| edit | on | in `$EDITOR` (default nano): `ebashrc`, `ezshrc`, `ebashprofile`, `ezprofile`, `ealiases`, `etmux` (reloads tmux), `essh`, `eknown` (`~/.ssh/known_hosts`), `ecrontab` (`crontab -e`), `egitconfig`, `egit` (this repo), `enano`, `evim`, `einputrc`, `eenv` (kept 600), `ehosts` (sudoedit), `ekitty`, `eghostty` |
+| docker | on | `d`, `dc`, `dcu`, `dcd`, `dcr`, `dcl`, `dps`, `dpsa`, `dport`, `di`, `dlog`, `dexec`, `dmounts`, `dprune` |
+| kubectl | off | `k`, `kgp`, `kgs`, `kgd`, `kga`, `kl`, `kd` (describe), `kdel` (delete), `kctx`, `kns` |
+| github | off | `ghpc`, `ghpv`, `ghpd`, `ghco`, `ghck`, `ghst`, `ghweb` (GitHub CLI) |
+
+A group is the block between `# @group <item>` and `# @end` in the file;
+lines outside a block (`ref`, `refa`, `alg`, `_need`) are always installed.
+`refa` reapplies this repo: it runs `make install` in `$INSTALL_DIR` (else
+`~/repos/install`, else `~/install`), reloads `~/.tmux.conf` when a tmux
+server runs, then reloads the shell like `ref`. A failed install skips the reload. Docker,
+kubectl and gh commands are functions that print `<tool> is not installed`
+(exit 127) when the tool is missing. The groups need **Shell aliases**
+(configs) to be ticked; `check` reports them `SKIPPED` otherwise. To add a
+group, wrap its lines in `# @group <name>` / `# @end` and add an
+`aliases|<name>|...|linux,macos|...|step:configs` line to `catalog.txt`
+(a test checks that both lists match).
+
+The docker group's `dc` hides the `dc` calculator; untick docker if you use it.
+
+On Windows the same markers split `configs/windows/profile.ps1` into nav,
+search, system, network, clipboard (`pwdc`, `catc`, `clipp`, `lastc`,
+`sshpubc`, `gbrc`, `ghashc`), edit (`eprofile`, `essh`, `eknown`, `egitconfig`, `egit`,
+`ewezterm`, `ehotkeys`, `ehosts`), git, docker, tools (on) and kubectl,
+terraform, dev (npm/yarn/pip/cargo), ai (off).
+
+The clipboard commands try pbcopy (macOS), wl-copy / xclip / xsel (Linux
+desktops), clip.exe (WSL), then tmux's buffer, then OSC 52 (most terminals,
+also over SSH). Files that setup installs (`~/.tmux.conf`, `~/.zshrc`,
+`~/.nanorc`, kitty, Ghostty) are replaced on the next run, with a `.bak.<time>`
+copy; for lasting changes edit `configs/` here. `~/.bash_aliases` stays yours. They need the **PowerShell profile** item.
+
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
-- `~/.bash_extras` and `~/.bash_show_origin` are always installed from the repo files.
+- `~/.bash_extras` is installed from `configs/bash_extras` with only the ticked alias
+  groups; `~/.bash_show_origin` is always installed from the repo file.
 - Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
   into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
   The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.
