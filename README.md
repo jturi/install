@@ -116,7 +116,11 @@ Run it as often as you like; a second run changes nothing.
     a long install never stops halfway for a password.
   - A lock (`~/.local/bootstrap/lock`) stops two runs at once. A lock left by a
     killed run is taken over.
-  - `sh setup.sh` re-runs itself under bash.
+  - `sh setup.sh` and `zsh setup.sh` re-run themselves under bash. Sourcing
+    `setup.sh` from any shell but bash is refused: it never starts an install
+    in place of the shell that sourced it.
+  - With no terminal to ask "Go ahead?", a run needs `--yes` (or `--dry-run`)
+    and otherwise stops with exit 1 before changing anything.
 - **Arch:** packages install with `pacman -Syu --needed`, because Arch doesn't
   support partial upgrades (`-Sy` alone). So when something is missing, the run
   also upgrades the system.

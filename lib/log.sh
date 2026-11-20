@@ -33,6 +33,11 @@ run() {
   "$@"
 }
 
+# True when stdin is a terminal, so a question can be asked. Tests replace it.
+have_tty() {
+  [[ -t 0 ]]
+}
+
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || return 0

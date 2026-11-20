@@ -107,7 +107,8 @@ usage() {
 
 Options:
   -n, --dry-run      Print the plan, change nothing
-  -y, --yes          No menu or prompts: use the saved selection, else defaults
+  -y, --yes          No menu or prompts: use the saved selection, else defaults.
+                     Needed when there is no terminal to ask "Go ahead?"
       --select       Show the menu and save the selection; install nothing
       --config FILE  Use FILE instead of ~/.local/bootstrap/config
   -h, --help         Show this help
@@ -192,6 +193,12 @@ main() {
   if want_menu; then menu=1; fi
   if ((CONFIG_EXPLICIT && !menu)) && [[ ! -f "${CONFIG_FILE}" ]]; then
     die "config file not found: ${CONFIG_FILE}"
+  fi
+
+  # Nobody to answer "Go ahead?": run only when told to (--yes), or when the
+  # run changes nothing anyway.
+  if ((!menu && !ASSUME_YES && !DRY_RUN && !SELECT_ONLY)) && ! have_tty; then
+    die "no terminal to ask 'Go ahead?': pass --yes to run unattended, or --dry-run to see the plan"
   fi
 
   if ((menu)) && ! menu_run; then

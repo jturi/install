@@ -508,7 +508,8 @@ m_reset() { rm -rf "${m_home}"; mkdir -p "${m_home}"; : >"${m_log}"; M_EXTRA="";
 m_save() { mkdir -p "$(dirname "${m_cfg}")"; printf '%s\n' "$@" >"${m_cfg}"; }
 steps() { xargs <"${m_log}"; }
 exists() { [[ -e "${m_cfg}" ]] && echo yes || echo no; }
-MENU_ON='menu_available() { return 0; }; menu_run() { echo menu >>"${m_log}"; }'
+# A terminal on both ends: the menu can show and "Go ahead?" can be asked.
+MENU_ON='have_tty() { return 0; }; menu_available() { return 0; }; menu_run() { echo menu >>"${m_log}"; }'
 DEFAULT_STEPS="packages configs tpm"
 
 m_reset; run_main --yes >/dev/null
@@ -516,9 +517,18 @@ check main-yes-defaults "${DEFAULT_STEPS}" "$(steps)"
 check main-yes-writes-no-config "no" "$(exists)"
 m_reset; m_save 'tmux-plugins.tpm=0' 'extras.zsh-login=1'; run_main --yes >/dev/null
 check main-saved-selection "packages configs zsh-login" "$(steps)"
-m_reset; run_main --terminal >/dev/null
+m_reset; run_main --terminal --yes >/dev/null
 check main-flag-terminal "${DEFAULT_STEPS} terminals" "$(steps)"
 check main-flag-not-saved "no" "$(exists)"
+# No terminal to ask "Go ahead?" and no --yes: refuse, change nothing.
+m_reset; out="$(run_main)"; rc=$?
+check main-no-tty-refuses "1" "${rc}"
+check main-no-tty-no-steps "" "$(steps)"
+check main-no-tty-says-yes "1" "$(grep -c 'pass --yes' <<<"${out}")"
+m_reset; run_main --terminal >/dev/null; rc=$?
+check main-no-tty-flags-refuse "1/" "${rc}/$(steps)"
+m_reset; run_main --dry-run >/dev/null; rc=$?
+check main-no-tty-dry-run-ok "0" "${rc}"
 m_reset; M_EXTRA="${MENU_ON}"; run_main --terminal >/dev/null
 check main-flag-skips-menu "${DEFAULT_STEPS} terminals" "$(steps)"
 m_reset; run_main --no-packages --yes >/dev/null
