@@ -455,6 +455,8 @@ Remove-Item Function:\wsl.exe
 $SavedGitGlobal = $env:GIT_CONFIG_GLOBAL
 # The check tests stub git as a no-op; this section needs the real one.
 Remove-Item Function:\git -ErrorAction SilentlyContinue
+# The Linux test container has no git: the checks that read git's own config skip there.
+$HasGit = [bool](Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
 $GitGlobal = Join-Path $Work 'gitconfig-test'
 $GitEmpty = Join-Path $Work 'gitconfig-empty'
 $Utf8 = New-Object Text.UTF8Encoding($false)
@@ -484,8 +486,8 @@ Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
 Check 'git-asked-twice' '2' ([string]$global:PromptLog.Count)
 Check 'git-config-user' 'octo' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
 Check 'git-config-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
-Check 'git-global-name' 'octo' (Get-StepGitGlobal 'user.name')
-Check 'git-global-email' 'octo@example.com' (Get-StepGitGlobal 'user.email')
+if ($HasGit) { Check 'git-global-name' 'octo' (Get-StepGitGlobal 'user.name') } else { Write-Output 'SKIP git-global-name: needs git' }
+if ($HasGit) { Check 'git-global-email' 'octo@example.com' (Get-StepGitGlobal 'user.email') } else { Write-Output 'SKIP git-global-email: needs git' }
 # Next run: the saved values are offered; Enter keeps them, no new prompt text.
 $global:Prompts = @('', '')
 Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
@@ -497,7 +499,7 @@ $global:Prompts = @('n', 'newname', '')
 Invoke-GitIdentityStep -ConfigPath $GitCfg -Interactive $true | Out-Null
 Check 'git-change-user' 'newname' (Get-ConfigValue -Path $GitCfg -Key 'github.user')
 Check 'git-change-keeps-email' 'octo@example.com' (Get-ConfigValue -Path $GitCfg -Key 'git.email')
-Check 'git-change-global' 'newname' (Get-StepGitGlobal 'user.name')
+if ($HasGit) { Check 'git-change-global' 'newname' (Get-StepGitGlobal 'user.name') } else { Write-Output 'SKIP git-change-global: needs git' }
 # Config keeps other settings: a catalog flag written earlier survives.
 Set-ConfigValue -Path $GitCfg -Key 'terminals.wezterm' -Value '1'
 Check 'git-config-keeps-flags' '1' (Get-ConfigValue -Path $GitCfg -Key 'terminals.wezterm')
@@ -528,6 +530,11 @@ Check 'git-no-console-reads-saved' '0' ([string]$global:PromptLog.Count)
 $global:PromptLog = @()
 Invoke-GitIdentityStep -ConfigPath $PartCfg -Interactive $true -NoPrompt | Out-Null
 Check 'git-noprompt-no-ask' '0' ([string]$global:PromptLog.Count)
+# -Unattended (setup -Yes): never asks, even from a console, and says why.
+$global:PromptLog = @()
+$UnOut = Invoke-GitIdentityStep -ConfigPath (Join-Path $Work 'gitid-yes\config') -Interactive $true -Unattended | Out-String
+Check 'git-unattended-no-ask' '0' ([string]$global:PromptLog.Count)
+Check 'git-unattended-warns' 'True' ([string]($UnOut -match 'without -Yes'))
 $env:GIT_CONFIG_GLOBAL = $GitGlobal
 Remove-Item Function:\Read-StepLine
 if ($SavedGitGlobal) { $env:GIT_CONFIG_GLOBAL = $SavedGitGlobal } else { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue }
@@ -595,7 +602,7 @@ Check 'sshd-verify-plans' 'True|0' (([string]($SrvPlan -match 'would install Ope
 Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $false 3>$null | Out-Null
 Check 'sshd-declined-no-elevation' '0' ([string]$global:ElevLog.Count)
 $DeclOut = Invoke-CheckStep -Catalog @((New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'ssh-server'; Label = 'OpenSSH server (sshd)'; Action = 'step:ssh-server'; Selected = $true })) -Missing ([ref]$SkipMissing) | Out-String
-Check 'sshd-declined-check-skipped' 'True|0' (([string]($DeclOut -match '(?m)^SKIPPED OpenSSH server \(sshd\) \(not confirmed\)')) + '|' + $SkipMissing)
+Check 'sshd-declined-check-skipped' 'True|0' (([string]($DeclOut -match '(?m)^  SKIPPED +OpenSSH server \(sshd\) \(not confirmed\)')) + '|' + $SkipMissing)
 # The question comes only without admin rights: an admin run has no popup.
 Check 'sshd-admin-no-question' 'True' ([string]((Get-Content -Raw (Join-Path $StepsDir 'sshserver.ps1')) -match "if \(-not \(Test-StepAdmin -IsAdmin \`$IsAdmin\)\) \{\s+if \(-not \(Read-StepSshServerConfirm"))
 $SrvOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $true | Out-String
@@ -614,6 +621,11 @@ Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null
 Check 'sshd-idempotent' '1' ([string]$global:ElevLog.Count)
 # Running, but the rule is the old unscoped one: elevate once to narrow it.
 function global:Test-StepSshFirewallScoped { $false }
+# sshd runs but the rule still allows every network: the check is not OK, and
+# a declined narrowing says so.
+Check 'sshd-check-wide-rule-not-ok' 'False' ([string](Test-CheckItem -Row $SrvRow))
+$WideOut = Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $false -Answer $false | Out-String
+Check 'sshd-declined-wide-rule-warns' 'True' ([string]($WideOut -match 'not limited to the local network'))
 Invoke-SshServerStep -Items @('ssh-server') -IsAdmin $true | Out-Null
 Check 'sshd-narrows-old-rule' '2' ([string]$global:ElevLog.Count)
 function global:Test-StepSshFirewallScoped { $true }
@@ -650,7 +662,7 @@ $ParseErr = $null
 Check 'sshd-script-parses' '0' ([string]@($ParseErr).Count)
 Check 'sshd-script-writes-status' 'True' ([string]($global:ElevLog[-2] -match [regex]::Escape($global:ElevStatus)))
 Check 'sshd-status-file-removed' 'False' ([string](Test-Path -LiteralPath $global:ElevStatus))
-Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped, Function:\git, Function:\make
+Remove-Item Function:\Get-StepSshdService, Function:\Invoke-StepElevated, Function:\Test-StepSshFirewallScoped
 . (Join-Path $StepsDir 'sshserver.ps1')
 # Scoped-rule detection on injected objects (no NetSecurity module in a container).
 $FwRule = New-Object PSObject -Property @{ Profile = 'Domain, Private' }
@@ -773,6 +785,39 @@ Check 'setup-confirm-no-steps' '0' ([string]$global:ScoopLog.Count)
 
 $ElevMsg = try { Invoke-Setup -Yes -Config $FailCfg2 -ConfigExplicit -CatalogPath $FailCatalog -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $true -ScoopPresent $false | Out-Null; '' } catch { $_.Exception.Message }
 Check 'setup-elevated-scoop-missing' 'True' ([string]($ElevMsg -match 'Administrator|Scoop'))
+
+# The Scoop download runs in a new powershell.exe: it sets TLS 1.2 itself.
+$SetupText = Get-Content -Raw (Join-Path $Root 'setup.ps1')
+$TlsAt = $SetupText.IndexOf('[Net.SecurityProtocolType]::Tls12')
+Check 'setup-tls12-before-scoop' 'True' ([string]($TlsAt -gt 0 -and $TlsAt -lt $SetupText.IndexOf("DownloadString('https://get.scoop.sh')")))
+
+# -Yes asks nothing of its own: the git identity runs unattended and the SSH
+# server question is answered yes from a console (Windows' UAC prompt remains).
+$YesCat = Join-Path $Work 'yescat.txt'
+[IO.File]::WriteAllText($YesCat, "win-setup|ssh-server|OpenSSH server (sshd)|windows|on|step:ssh-server`n", (New-Object Text.UTF8Encoding($false)))
+$global:IdCalls = @(); $global:SshAnswers = @()
+function Invoke-GitIdentityStep { param([string]$ConfigPath = '', [switch]$Verify, [switch]$NoPrompt, [switch]$Unattended) if (-not $NoPrompt) { $global:IdCalls += [string][bool]$Unattended } }
+function Invoke-SshServerStep { param([string[]]$Items = @(), [switch]$Verify, [object]$IsAdmin = $null, [object]$Answer = $null) $global:SshAnswers += [string]$Answer }
+function Invoke-CheckStep { param([object[]]$Catalog = @(), [string]$HomeDir = '', $Missing = $null) }
+function Test-StepSshConsole { param([object]$Interactive = $null) return $true }
+Invoke-Setup -Yes -Config (Join-Path $Work 'yes-config') -CatalogPath $YesCat -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $false -ScoopPresent $true | Out-Null
+Check 'setup-yes-identity-unattended' 'True' ($global:IdCalls -join ',')
+Check 'setup-yes-ssh-answered' 'True' ($global:SshAnswers -join ',')
+# No console under -Yes: nobody can click UAC, so the SSH server is declined.
+function Test-StepSshConsole { param([object]$Interactive = $null) return $false }
+$global:SshAnswers = @()
+Invoke-Setup -Yes -Config (Join-Path $Work 'yes-config') -CatalogPath $YesCat -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $false -ScoopPresent $true | Out-Null
+Check 'setup-yes-no-console-declines' 'False' ($global:SshAnswers -join ',')
+# From the menu both questions stay.
+$global:IdCalls = @(); $global:SshAnswers = @()
+function Test-MenuAvailable { return $true }
+function Show-Menu { param([object[]]$Catalog) return 'continue' }
+function Read-SetupConfirm { param([string]$Question) return $true }
+Invoke-Setup -Config (Join-Path $Work 'menu-config') -CatalogPath $YesCat -HomeDir $DryHome -StepsDir $StepsDir -IsAdmin $false -ScoopPresent $true | Out-Null
+Check 'setup-menu-identity-asks' 'False' ($global:IdCalls -join ',')
+Check 'setup-menu-ssh-asks' '' ($global:SshAnswers -join ',')
+. (Join-Path $Root (Join-Path 'windows' 'menu.ps1'))
+. (Join-Path $Root 'setup.ps1')
 
 if ($SavedStepScoop) { $env:SCOOP = $SavedStepScoop } else { Remove-Item Env:SCOOP -ErrorAction SilentlyContinue }
 

@@ -170,8 +170,10 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      (Settings > Network & internet > the network > Network profile type);
      it does not change the category itself. It needs
      administrator rights: setup first asks `Install SSH server with admin
-     rights? [Y/n]` (no means SKIPPED in the check), then Windows shows one
-     UAC prompt. If Windows stages the feature until a restart, the step says
+     rights? [Y/n]` (no means SKIPPED in the check; `-Yes` skips the
+     question), then Windows shows one UAC prompt. The check counts the
+     server only when `sshd` runs *and* the rule is narrowed: a running
+     `sshd` whose rule still allows every network is not OK. If Windows stages the feature until a restart, the step says
      so and the check prints SKIPPED (restart needed); run setup again after
      the restart to start `sshd`. A progress bar
      shows each stage while the hidden elevated PowerShell works (the feature
@@ -203,7 +205,9 @@ cd ~/repos/install
 powershell -ExecutionPolicy Bypass -File ./setup.ps1 -DryRun
 ```
 
-Flags mirror `setup.sh`: `-Yes` (no menu: saved selection, else defaults),
+Flags mirror `setup.sh`: `-Yes` (no menu: saved selection, else defaults;
+asks no questions of its own, but a ticked SSH server still shows the UAC
+prompt and `ssh-keygen` still asks for a passphrase),
 `-DryRun` (plan only, writes nothing), `-Select` (menu then save only),
 `-Config <path>` (use that file instead of the saved one), `-Verify`
 (read-only pre-checks, changes nothing).
