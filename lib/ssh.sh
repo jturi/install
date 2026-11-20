@@ -241,7 +241,7 @@ setup_ssh_key() {
   run chmod 700 "${TARGET_HOME}/.ssh"
   # A .pub with no private half may belong to a key kept elsewhere: keep a copy.
   backup_file "${key}.pub"
-  run ssh-keygen "${args[@]}"
+  run_tty ssh-keygen "${args[@]}"
   if ((!DRY_RUN)); then
     ok "Created ${key}. Public key (add it to GitHub/servers):"
     cat "${key}.pub"

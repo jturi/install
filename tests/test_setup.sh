@@ -909,6 +909,37 @@ check summary-failed "1" "$(grep -c 'FAILED .* bad' <<<"${sum_out}")"
 check summary-rc "rc=1" "$(grep -o 'rc=[0-9]' <<<"${sum_out}")"
 check summary-warn-only-rc "rc=0" "$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR=""; run_step w warn x; set +e; print_summary; echo "rc=$?") 2>/dev/null | grep -o 'rc=[0-9]')"
 
+# A failed step names the file, line and command that failed.
+check summary-failed-where "1" "$(grep -cE -- '- failed at lib/[a-z]+\.sh:[0-9]+: false|- failed at .*: false' <<<"$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR=""
+  step_fails() { true; false; echo not-reached; }
+  run_step bad step_fails; set +e; print_summary) 2>&1)")"
+check summary-where-only-failed "1" "$(grep -c 'failed at' <<<"${sum_out}")"
+check summary-failed-run-where "1" "$(grep -c -- '- failed at lib/pkg.sh:[0-9]*: brew install nopkg' <<<"$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR="" VERBOSE=0
+  brew() { echo "No available formula with the name nopkg"; return 1; }
+  run_step packages pkg_install macos nopkg; set +e; print_summary) 2>&1)")"
+
+# Quiet by default: a command's output goes to the log, not the screen; on
+# failure its last lines are shown. --verbose shows everything.
+q_dir="${WORK}/quiet"; mkdir -p "${q_dir}"; : >"${q_dir}/log"
+q_out="$( (RUN_DIR="${q_dir}" LOG_FILE="${q_dir}/log" VERBOSE=0; run sh -c 'echo chatter-ok') 2>&1)"
+check quiet-hides-output "0" "$(grep -c '^chatter-ok' <<<"${q_out}")"
+check quiet-prints-command "1" "$(grep -c '\$ sh -c' <<<"${q_out}")"
+check quiet-output-in-log "1" "$(grep -c 'chatter-ok' "${q_dir}/log")"
+q_out="$( (RUN_DIR="${q_dir}" LOG_FILE="" VERBOSE=0; set +e; run sh -c 'echo why-it-broke; exit 3'; echo "rc=$?") 2>&1)"
+check quiet-failure-shows-output "1" "$(grep -c '| why-it-broke' <<<"${q_out}")"
+check quiet-failure-rc "rc=3" "$(grep -o 'rc=[0-9]' <<<"${q_out}")"
+check quiet-no-temp-left "0" "$(find "${q_dir}" -name 'cmd.*' | wc -l | tr -d ' ')"
+q_out="$( (RUN_DIR="${q_dir}" LOG_FILE="" VERBOSE=1; run sh -c 'echo chatter-verbose') 2>&1)"
+check verbose-shows-output "1" "$(grep -c '^chatter-verbose' <<<"${q_out}")"
+check run-tty-not-captured "1" "$( (RUN_DIR="${q_dir}" VERBOSE=0; run_tty sh -c 'echo direct') 2>&1 | grep -c '^direct')"
+check flag-verbose "1" "$( (parse_args --verbose; echo "${VERBOSE}") )"
+
+# Colours: only on a terminal and only when NO_COLOR is unset; none in the log.
+check colour-on-tty "yes" "$( (stdout_is_tty() { return 0; }; NO_COLOR=""; set_colours; [[ -n "${C_RED}" ]] && echo yes) )"
+check colour-no-color "" "$( (stdout_is_tty() { return 0; }; NO_COLOR=1; set_colours; printf %s "${C_RED}") )"
+check colour-no-tty "" "$( (stdout_is_tty() { return 1; }; NO_COLOR=""; set_colours; printf %s "${C_RED}") )"
+check colour-strip "warn x" "$(printf '\033[33mwarn\033[0m x\n' >"${WORK}/col.log"; strip_colours "${WORK}/col.log"; cat "${WORK}/col.log")"
+
 # Lock: a live owner blocks a second run; a dead owner's lock is taken over.
 lk="${WORK}/lock"
 check lock-live-blocks "1" "$( (take_lock "${lk}"; (take_lock "${lk}") >/dev/null 2>&1; echo $?) 2>/dev/null)"

@@ -72,7 +72,7 @@ cd ~/repos/install
 
 Options: `-n/--dry-run`, `-y/--yes`, `--select`, `--config FILE`, `--no-packages`, `--no-configs`,
 `--terminal`, `--no-terminal`, `--ssh-server`, `--ssh-local-only`, `--ssh-key`, `--no-ssh-key`,
-`--zsh-default`, `--no-zsh-default`, `--debug`, `--no-log`, `-h/--help`.
+`--zsh-default`, `--no-zsh-default`, `-v/--verbose`, `--debug`, `--no-log`, `-h/--help`.
 
 Run it as your normal user. The script uses `sudo` for the package manager
 only. It runs as root without `sudo` when you are root.
@@ -85,9 +85,13 @@ Run it as often as you like; a second run changes nothing.
   `dpkg-query`, `rpm -q`, `brew list`). If nothing is missing, the package
   manager doesn't run at all: no sudo, no network. A config identical to the repo
   file is left alone, and an existing SSH key, TPM or login shell is kept.
-- **Verbose.** Each step prints a header, and each command that changes the
-  machine is printed (`$ cmd`) before it runs. `--dry-run` prints the same
-  commands without running them. `--debug` traces every shell line (`set -x`).
+- **Quiet, but not silent.** Each step prints a header, and each command that
+  changes the machine is printed (`$ cmd`) before it runs. The command's own
+  output (apt, dnf, pacman, brew, git) goes to the log only; if the command
+  fails, its last 40 lines are printed under it. `-v/--verbose` shows all of it
+  as it runs. `--dry-run` prints the commands without running them. `--debug`
+  traces every shell line (`set -x`). Colours appear only on a terminal and
+  never with `NO_COLOR` set; the log is plain text.
 - **Checked.** After a real run (not `--dry-run`) a last `check` step tests
   every ticked item and prints `OK`, `MISSING` or `SKIPPED <reason>`: packages
   through `pkg_installed`, configs and TPM by their files, terminals by app and
@@ -96,7 +100,8 @@ Run it as often as you like; a second run changes nothing.
   `SKIPPED` is not an error (no systemd in a container, no terminal for an SSH
   key passphrase, Ghostty with no distro package).
   The summary shows each step with its time and `OK`, `WARN` (with the warning
-  text) or `FAILED`.
+  text) or `FAILED` (with the file, line and command that failed, for example
+  `failed at lib/pkg.sh:73: sudo dnf install -y foo`).
 - **Logged.** Every real run is copied to
   `~/.local/bootstrap/logs/setup-<time>.log`, and the newest 20 logs are kept.
   `--no-log` turns this off. The first line names the version: the git commit,

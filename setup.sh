@@ -14,7 +14,8 @@
 #                   [--no-packages] [--no-configs] [--ssh-server]
 #                   [--ssh-local-only]
 #                   [--terminal | --no-terminal] [--ssh-key | --no-ssh-key]
-#                   [--zsh-default | --no-zsh-default] [--debug] [--no-log]
+#                   [--zsh-default | --no-zsh-default] [--verbose] [--debug]
+#                   [--no-log]
 # Started as `sh setup.sh` or `zsh setup.sh`? Rerun under bash before any
 # bash-only syntax. Sourced into such a shell, refuse instead: `exec bash "$0"`
 # would replace that shell with a full install. POSIX sh cannot tell sourcing
@@ -41,7 +42,7 @@ if shopt -qo posix; then
   fi
   set +o posix
 fi
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
@@ -69,9 +70,10 @@ CONFIG_FILE=""
 CONFIG_EXPLICIT=0
 FLAGS_USED=0 # a selection flag was passed: use it instead of the menu
 DEBUG=0
+VERBOSE=0 # 1: show command output (package managers, git) as it runs
 LOGGING=1
 STEP_LABELS=() STEP_STATUS=() STEP_TIME=()
-STEP_WARN_FILE="" RUN_DIR="" LOCK_DIR="" LOG_FILE="" SUDO_KEEPALIVE="" TEE_PID=""
+STEP_WARN_FILE="" STEP_ERR_FILE="" RUN_DIR="" LOCK_DIR="" LOG_FILE="" SUDO_KEEPALIVE="" TEE_PID=""
 SSH_CLIENT_ADDR="" # set by ssh_session_denied, for its caller's message
 KEEP_LOGS=20
 
@@ -102,7 +104,7 @@ source "${SCRIPT_DIR}/lib/steps.sh"
 source "${SCRIPT_DIR}/lib/run.sh"
 
 usage() {
-  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 Options:
@@ -127,6 +129,9 @@ These change one run, skip the menu, and are never saved:
       --no-terminal  Skip all terminals
 
 Output:
+  -v, --verbose      Show the output of every command (package managers, git).
+                     By default it goes to the log only, and is shown if the
+                     command fails. NO_COLOR=1 turns colours off.
       --debug        Trace every shell command (set -x)
       --no-log       Do not write ~/.local/bootstrap/logs/setup-<time>.log
 
@@ -158,6 +163,7 @@ parse_args() {
       --no-zsh-default) ZSH_DEFAULT_MODE=skip FLAGS_USED=1 ;;
       --terminal) TERMINAL_MODE=install FLAGS_USED=1 ;;
       --no-terminal) TERMINAL_MODE=skip FLAGS_USED=1 ;;
+      -v | --verbose) VERBOSE=1 ;;
       --debug) DEBUG=1 ;;
       --no-log) LOGGING=0 ;;
       -h | --help) usage; exit 0 ;;

@@ -287,7 +287,7 @@ setup_zsh_default() {
   fi
   info "Setting login shell to ${zsh_path}"
   if [[ "${UNAME_S}" == "Darwin" ]]; then
-    run chsh -s "${zsh_path}"
+    run_tty chsh -s "${zsh_path}"
   else
     as_root usermod -s "${zsh_path}" "$(current_user)"
   fi

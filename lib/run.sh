@@ -103,16 +103,20 @@ run_step() {
   shift
   [[ -n "${RUN_DIR}" ]] || RUN_DIR="$(mktemp -d)"
   info "Step $((n + 1)): ${title}"
-  STEP_WARN_FILE="${RUN_DIR}/warn.${n}"
+  STEP_WARN_FILE="${RUN_DIR}/warn.${n}" STEP_ERR_FILE="${RUN_DIR}/err.${n}"
   : >"${STEP_WARN_FILE}"
+  : >"${STEP_ERR_FILE}"
   set +e
   (
-    set -e
+    # -E: the ERR trap also fires inside functions. The first failure is
+    # recorded with its place, for the summary.
+    set -Ee
+    trap 'note_error "${BASH_SOURCE[0]:-?}" "${LINENO}" "${BASH_COMMAND}"' ERR
     "$@"
   )
   rc=$?
   set -e
-  STEP_WARN_FILE=""
+  STEP_WARN_FILE="" STEP_ERR_FILE=""
   STEP_LABELS+=("${title}")
   STEP_TIME+=("$((SECONDS - start))s")
   if ((rc != 0)); then
@@ -122,6 +126,13 @@ run_step() {
   else
     STEP_STATUS+=("OK")
   fi
+}
+
+# ERR trap of a step: keep the first failing command and where it was, unless
+# run() already recorded a better one.
+note_error() {
+  [[ -n "${STEP_ERR_FILE:-}" && ! -s "${STEP_ERR_FILE}" ]] || return 0
+  printf 'failed at %s:%s: %s\n' "${1#"${SCRIPT_DIR}"/}" "$2" "$3" >"${STEP_ERR_FILE}" 2>/dev/null || true
 }
 
 # True when the step that ran last failed.
@@ -140,6 +151,8 @@ print_summary() {
       *) color="${C_RED}" failed=1 ;;
     esac
     printf '  %s%-7s%s %5s  %s\n' "${color}" "${STEP_STATUS[i]}" "${C_RESET}" "${STEP_TIME[i]}" "${STEP_LABELS[i]}"
+    [[ "${STEP_STATUS[i]}" != "FAILED" || ! -s "${RUN_DIR}/err.${i}" ]] ||
+      printf '                 - %s\n' "$(cat "${RUN_DIR}/err.${i}")"
     [[ -s "${RUN_DIR}/warn.${i}" ]] || continue
     while IFS= read -r line; do printf '                 - %s\n' "${line}"; done <"${RUN_DIR}/warn.${i}"
   done
@@ -263,6 +276,7 @@ cleanup() {
     exec 1>&- 2>&-
     wait "${TEE_PID}" 2>/dev/null || true
   fi
+  [[ -z "${LOG_FILE}" || ! -f "${LOG_FILE}" ]] || strip_colours "${LOG_FILE}" 2>/dev/null || true
 }
 
 # Lock, log and sudo for a real install run.
