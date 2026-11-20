@@ -173,6 +173,19 @@ if [ -f ~/.bash_show_origin ]; then
     source ~/.bash_show_origin
 fi'
 
+# The texts older versions appended, unmarked, when a loader lacked them.
+# shellcheck disable=SC2016 # literal text, matched literally
+ALIAS_LOADER_PIECES=(
+  $'\n# Load custom aliases in Zsh'
+  $'\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"'
+  $'\nif [ -f ~/.bash_aliases ]; then\n    source ~/.bash_aliases\nfi'
+  $'\nif [ -f ~/.bash_aliases2 ]; then\n    source ~/.bash_aliases2\nfi'
+  $'\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi'
+  $'\n# Show where each alias/function comes from before it runs (last, so it\n# sees everything above). Toggle with: show_origin on|off'
+  $'\nif [ -f ~/.bash_show_origin ]; then\n    source ~/.bash_show_origin\nfi'
+  "${BREW_COMPLETION_BLOCK}"
+)
+
 # The bash startup file for the alias loader. Linux terminals start non-login
 # shells, which read only ~/.bashrc; login shells reach it through the
 # ~/.bash_profile (Arch, Fedora) or ~/.profile (Debian) the distro ships.
@@ -205,46 +218,15 @@ install_aliases() {
 
   local rc
   rc="$(bash_rc_file "${family}")"
-  # Upgrade: an older loader has .bash_aliases2 (or only .bash_extras) but lacks
-  # newer lines. Append just the missing blocks instead of duplicating the loader.
-  # Also ensure ~/.local/bin is on PATH (older loaders predate bin scripts).
-  if grep -qsF 'source ~/.bash_aliases2' "${rc}" || grep -qsF 'source ~/.bash_extras' "${rc}"; then
-    local missing=""
-    grep -qsF 'source ~/.bash_extras' "${rc}" || missing="${missing} extras"
-    # shellcheck disable=SC2016 # literal line, matched literally with grep -F
-    grep -qsF 'export PATH="$HOME/.local/bin:$PATH"' "${rc}" || missing="${missing} path"
-    grep -qsF 'source ~/.bash_show_origin' "${rc}" || missing="${missing} origin"
-    grep -qsF 'profile.d/bash_completion.sh' "${rc}" || missing="${missing} completion"
-    if [[ -n "${missing}" ]]; then
-      backup_file "${rc}"
-      info "Adding${missing} to ${rc}"
-      if ((DRY_RUN)); then
-        printf '   [dry-run] append%s to %s\n' "${missing}" "${rc}"
-      else
-        # shellcheck disable=SC2016 # written literally into the rc file
-        [[ "${missing}" == *extras* ]] && printf '\nif [ -f ~/.bash_extras ]; then\n    source ~/.bash_extras\nfi\n' >>"${rc}"
-        # shellcheck disable=SC2016 # written literally into the rc file
-        [[ "${missing}" == *path* ]] && printf '\n# Helper scripts installed by setup.sh (~/.local/bin).\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${rc}"
-        [[ "${missing}" == *origin* ]] && printf '\nif [ -f ~/.bash_show_origin ]; then\n    source ~/.bash_show_origin\nfi\n' >>"${rc}"
-        [[ "${missing}" == *completion* ]] && printf '%s\n' "${BREW_COMPLETION_BLOCK}" >>"${rc}"
-      fi
-      ok "${rc}"
-      return 0
-    fi
-    ok "${rc} already loads the alias files"
-    return 0
-  fi
-  backup_file "${rc}"
-  info "Adding alias loader to ${rc}"
-  if ((DRY_RUN)); then
-    printf '   [dry-run] append alias loader to %s\n' "${rc}"
-  else
-    printf '\n%s\n' "${ALIAS_LOADER}" >>"${rc}"
-  fi
-  ok "${rc}"
+  # One marked block. Older versions appended the loader without markers, in
+  # one piece or bit by bit: those exact texts are taken out (the whole old
+  # loader is replaced in place), once.
+  local had_block=0
+  ! grep -qsxF "$(rc_begin aliases)" "${rc}" || had_block=1
+  ensure_rc_block "${rc}" aliases "${ALIAS_LOADER}" "${ALIAS_LOADER}" "${ALIAS_LOADER_PIECES[@]}" || return 1
   # Older installs put the loader in ~/.bash_profile on Linux too. It is never
   # deleted for the user; login shells just load the files twice, harmlessly.
-  if [[ "${rc}" == "${TARGET_HOME}/.bashrc" ]] && grep -qsF 'source ~/.bash_extras' "${TARGET_HOME}/.bash_profile"; then
+  if ((!had_block)) && [[ "${rc}" == "${TARGET_HOME}/.bashrc" ]] && grep -qsF 'source ~/.bash_extras' "${TARGET_HOME}/.bash_profile"; then
     info "an older alias loader in ${TARGET_HOME}/.bash_profile can be removed; ${rc} loads the aliases now"
   fi
 }

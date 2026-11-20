@@ -176,6 +176,36 @@ check aliases-rerun-no-backup "0" "$(find "${ah}/.local/bootstrap/backups" -type
 # Loader sources every file in order: extras before origin (origin hooks the prompt, so it loads last).
 check loader-order "aliases aliases2 extras show_origin" "$(grep -o 'source ~/\.bash_[a-z0-9_]*' "${ah}/.bashrc" | sed 's/.*\.bash_//' | tr '\n' ' ' | sed 's/ $//')"
 
+# The loader is one marked block: rewritten in place, user lines around it kept.
+check rc-block-markers "1 1" "$(grep -c '^# >>> install/setup.sh: aliases >>>$' "${ah}/.bashrc") $(grep -c '^# <<< install/setup.sh: aliases <<<$' "${ah}/.bashrc")"
+rcb="${WORK}/rc_block"; mkdir -p "${rcb}"
+printf 'export FOO=1\n# >>> install/setup.sh: aliases >>>\nstale line\n# <<< install/setup.sh: aliases <<<\nalias after=1\n' >"${rcb}/.bashrc"
+chmod 600 "${rcb}/.bashrc"
+(TARGET_HOME="${rcb}"; install_aliases) >/dev/null 2>&1
+check rc-block-replaced "0 1" "$(grep -c 'stale line' "${rcb}/.bashrc") $(grep -c 'source ~/.bash_extras' "${rcb}/.bashrc")"
+check rc-block-user-before "export FOO=1" "$(head -n 1 "${rcb}/.bashrc")"
+check rc-block-user-after "alias after=1" "$(tail -n 1 "${rcb}/.bashrc")"
+check rc-block-mode-kept "600" "$(stat -c %a "${rcb}/.bashrc" 2>/dev/null || stat -f %Lp "${rcb}/.bashrc")"
+check rc-block-no-temp "0" "$(find "${rcb}" -maxdepth 1 -name '.bashrc.*' | wc -l | tr -d ' ')"
+check rc-block-rerun-unchanged "1" "$( (TARGET_HOME="${rcb}"; install_aliases) 2>&1 | grep -c 'bashrc (unchanged)')"
+# The old unmarked loader, exactly as setup.sh wrote it: replaced in place.
+rcl="${WORK}/rc_legacy"; mkdir -p "${rcl}"
+printf 'before=1\n\n%s\n\nafter=1\n' "${ALIAS_LOADER}" >"${rcl}/.bashrc"
+(TARGET_HOME="${rcl}"; install_aliases) >/dev/null 2>&1
+check rc-legacy-in-place "before=1 after=1" "$(head -n 1 "${rcl}/.bashrc") $(tail -n 1 "${rcl}/.bashrc")"
+check rc-legacy-single "1 1" "$(grep -c 'source ~/.bash_extras' "${rcl}/.bashrc") $(grep -c '^# Load custom aliases' "${rcl}/.bashrc")"
+check rc-legacy-marked "1" "$(grep -c '>>> install/setup.sh: aliases >>>' "${rcl}/.bashrc")"
+# A symlinked rc (dotfile manager): written through, the link stays.
+rcs="${WORK}/rc_link"; mkdir -p "${rcs}"; echo 'mine=1' >"${WORK}/rc_link_target"; ln -s "${WORK}/rc_link_target" "${rcs}/.bashrc"
+(TARGET_HOME="${rcs}"; install_aliases) >/dev/null 2>&1
+check rc-symlink-kept "link 1" "$([[ -L "${rcs}/.bashrc" ]] && echo link) $(grep -c 'source ~/.bash_extras' "${WORK}/rc_link_target")"
+# Broken markers (BEGIN without END): never guess, leave the file alone.
+rcx="${WORK}/rc_broken"; mkdir -p "${rcx}"; printf 'a=1\n# >>> install/setup.sh: aliases >>>\nb=1\n' >"${rcx}/.bashrc"
+cp "${rcx}/.bashrc" "${WORK}/rc_broken.orig"
+check rc-broken-fails "1" "$( (TARGET_HOME="${rcx}"; install_aliases) >/dev/null 2>&1; echo $?)"
+check rc-broken-untouched "same" "$(cmp -s "${rcx}/.bashrc" "${WORK}/rc_broken.orig" && echo same)"
+check rc-dry-run-untouched "same" "$(cp "${WORK}/rc_broken.orig" "${WORK}/rc_dry"; mkdir -p "${WORK}/rcd"; printf 'x=1\n' >"${WORK}/rcd/.bashrc"; (TARGET_HOME="${WORK}/rcd"; DRY_RUN=1; install_aliases) >/dev/null 2>&1; [[ "$(cat "${WORK}/rcd/.bashrc")" == x=1 ]] && echo same)"
+
 # Aliases: user's own ~/.bash_aliases is kept; repo file goes to .bash_aliases2;
 # on macOS (login shells) an existing ~/.bash_profile gets the loader (backed
 # up), ~/.bashrc is untouched.

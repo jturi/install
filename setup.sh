@@ -100,6 +100,8 @@ source "${SCRIPT_DIR}/lib/os.sh"
 source "${SCRIPT_DIR}/lib/fs.sh"
 # shellcheck source=lib/backup.sh
 source "${SCRIPT_DIR}/lib/backup.sh"
+# shellcheck source=lib/rc.sh
+source "${SCRIPT_DIR}/lib/rc.sh"
 # shellcheck source=lib/pkg.sh
 source "${SCRIPT_DIR}/lib/pkg.sh"
 # shellcheck source=lib/ssh.sh
