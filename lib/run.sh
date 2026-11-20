@@ -132,6 +132,8 @@ run_step() {
 # run() already recorded a better one.
 note_error() {
   [[ -n "${STEP_ERR_FILE:-}" && ! -s "${STEP_ERR_FILE}" ]] || return 0
+  # `return 1` from a function: it said why itself (warn), the place adds nothing.
+  [[ "$3" != return* ]] || return 0
   printf 'failed at %s:%s: %s\n' "${1#"${SCRIPT_DIR}"/}" "$2" "$3" >"${STEP_ERR_FILE}" 2>/dev/null || true
 }
 
