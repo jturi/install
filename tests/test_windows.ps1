@@ -302,9 +302,26 @@ $Ps5Profile = Join-Path (Join-Path $DocsDir 'WindowsPowerShell') 'Microsoft.Powe
 $Ps7Profile = Join-Path (Join-Path $DocsDir 'PowerShell') 'Microsoft.PowerShell_profile.ps1'
 New-Item -ItemType Directory -Path (Split-Path $Ps5Profile -Parent) -Force | Out-Null
 [IO.File]::WriteAllText($Ps5Profile, '# old profile', (New-Object Text.UTF8Encoding($false)))
-Invoke-ProfileStep -Items @('profile') -DocumentsDir $DocsDir | Out-Null
+# Every alias group ticked: the profile is copied unchanged.
+$ProfGroups = @([regex]::Matches([IO.File]::ReadAllText($ProfSrc), '(?m)^# @group ([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+Invoke-ProfileStep -Items (@('profile') + $ProfGroups) -DocumentsDir $DocsDir | Out-Null
 Check 'step-profile-copies-ps5' 'same' (cmp-bytes $Ps5Profile $ProfSrc)
 Check 'step-profile-copies-ps7' 'same' (cmp-bytes $Ps7Profile $ProfSrc)
+# Every '# @group' in the profile is a Windows aliases item in the catalog.
+$WinAliasItems = @((Import-Catalog -Path (Join-Path $Root 'catalog.txt')) | Where-Object { $_.Group -eq 'aliases' } | ForEach-Object { $_.Item } | Sort-Object -Unique)
+Check 'profile-groups-match-catalog' ($ProfGroups -join ' ') ($WinAliasItems -join ' ')
+# Only git ticked: docker functions are gone, git and the always-on lines stay.
+$GitOnly = Get-ProfileGroupText -SrcPath $ProfSrc -Groups @('git')
+Check 'profile-group-git-kept' 'True' ([string]($GitOnly -match "Set-UserAlias 'gs'"))
+Check 'profile-group-docker-dropped' 'False' ([string]($GitOnly -match 'function dps'))
+Check 'profile-group-always-kept' 'True' ([string]($GitOnly -match 'function Set-UserAlias'))
+$Tok = $null; $ParseErr = $null
+[void][System.Management.Automation.Language.Parser]::ParseInput($GitOnly, [ref]$Tok, [ref]$ParseErr)
+Check 'profile-group-git-parses' '0' ([string]@($ParseErr).Count)
+# Alias groups without the profile item install nothing.
+$NoProfDocs = Join-Path $Work 'noprof-docs'
+Invoke-ProfileStep -Items @('git') -DocumentsDir $NoProfDocs | Out-Null
+Check 'profile-groups-need-profile' 'False' ([string](Test-Path $NoProfDocs))
 Check 'step-profile-backs-up-old' '1' ([string]@(Get-ChildItem -Path (Split-Path $Ps5Profile -Parent) -Filter '*.bak.*').Count)
 $VerifyDocs = Join-Path $Work 'verify-docs'
 Invoke-ProfileStep -Items @('profile') -DocumentsDir $VerifyDocs -Verify | Out-Null

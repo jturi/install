@@ -144,7 +144,8 @@ and hands off to `setup.ps1` (with `-DryRun` when `INSTALL_DRYRUN=1`).
      `configs/windows/profile.ps1` to
      `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1` and
      `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (the real
-     Documents folder, also when OneDrive moved it).
+     Documents folder, also when OneDrive moved it), with only the ticked
+     alias groups (see Alias groups).
    - **AutoHotkey hotkeys**: installs AutoHotkey v2
      (`scoop install extras/autohotkey`), copies `configs/windows/hotkeys.ahk`
      to `%USERPROFILE%\hotkeys\`, creates `personal.ahk` there from
@@ -348,10 +349,47 @@ only, no fzf/eza/python deps. Plus 18 more keepers that work on macOS + Linux
 `gundo`/`groot`/`gstash`/`gpop`. Both bash and zsh load both files (extras last, so
 `m` can use `tm`).
 
+### Alias groups
+
+The menu has an **aliases** group with one item per section of
+`configs/bash_extras`. Only the ticked ones reach `~/.bash_extras`:
+
+| Item | Default | What |
+|------|---------|------|
+| nav | on | `up`, `mkcd`, `lt`, `ltt`, `cd1`..`cd3`, `dow`, `rep` |
+| tmux | on | `tm`, `m`, `ta`, `tl`, `tn`, `tkill`, `tmuxhelp` |
+| git | on | status/diff, add/commit, sync, log, merge/rebase/cherry-pick, stash |
+| system | on | `sudo2`, `again`, `psg`, `psmem`, `pscpu`, `killport`, `ports`, `dfh`, `duh` |
+| network | on | `myip`, `down`, `serve`, `ping5` |
+| files | on | `md`, `extract` |
+| search | on | `hgrep` |
+| docker | on | `d`, `dc`, `dcu`, `dcd`, `dcr`, `dcl`, `dps`, `dpsa`, `dport`, `di`, `dlog`, `dexec`, `dmounts`, `dprune` |
+| kubectl | off | `k`, `kgp`, `kgs`, `kgd`, `kga`, `kl`, `kd`, `kctx`, `kns` |
+| github | off | `ghpc`, `ghpv`, `ghpd`, `ghco`, `ghck`, `ghst`, `ghweb` (GitHub CLI) |
+
+A group is the block between `# @group <item>` and `# @end` in the file;
+lines outside a block (`ref`, `refa`, `alg`, `_need`) are always installed.
+`refa` reapplies this repo: it runs `make install` in `$INSTALL_DIR` (else
+`~/repos/install`, else `~/install`), reloads `~/.tmux.conf` when a tmux
+server runs, then reloads the shell like `ref`. A failed install skips the reload. Docker,
+kubectl and gh commands are functions that print `<tool> is not installed`
+(exit 127) when the tool is missing. The groups need **Shell aliases**
+(configs) to be ticked; `check` reports them `SKIPPED` otherwise. To add a
+group, wrap its lines in `# @group <name>` / `# @end` and add an
+`aliases|<name>|...|linux,macos|...|step:configs` line to `catalog.txt`
+(a test checks that both lists match).
+
+The docker group's `dc` hides the `dc` calculator; untick docker if you use it.
+
+On Windows the same markers split `configs/windows/profile.ps1` into nav,
+search, system, network, git, docker, tools (on) and kubectl, terraform, dev
+(npm/yarn/pip/cargo), ai (off). They need the **PowerShell profile** item.
+
 - No `~/.bash_aliases` yet: it is created from the repo file.
 - You already have your own `~/.bash_aliases`: it is kept as is, and the repo
   file goes to `~/.bash_aliases2`.
-- `~/.bash_extras` and `~/.bash_show_origin` are always installed from the repo files.
+- `~/.bash_extras` is installed from `configs/bash_extras` with only the ticked alias
+  groups; `~/.bash_show_origin` is always installed from the repo file.
 - Helper scripts in `configs/bin/` (e.g. `tmuxhelp.sh`) install executable
   into `~/.local/bin/`; the wrapper in `bash_extras` (`tmuxhelp`) calls them.
   The loader block and repo `.zshrc` export `~/.local/bin` on `PATH`.

@@ -50,6 +50,19 @@ configs|zshrc|zsh config|linux,macos|on|step:configs
 configs|aliases|Shell aliases|linux,macos|on|step:configs
 configs|bin|Helper scripts|linux,macos|on|step:configs
 
+# Alias groups: sections of configs/bash_extras between `# @group <item>` and
+# `# @end`. Only the ticked groups reach ~/.bash_extras. Needs configs.aliases.
+aliases|nav|Navigation and listing (up, mkcd, lt, ltt)|linux,macos|on|step:configs
+aliases|tmux|tmux (tm, ta, tl, tmuxhelp)|linux,macos|on|step:configs
+aliases|git|git (gs, gd, gl, gpush, gm, grb, ...)|linux,macos|on|step:configs
+aliases|system|Processes and disk (psg, killport, ports, duh)|linux,macos|on|step:configs
+aliases|network|Network and downloads (myip, down, serve)|linux,macos|on|step:configs
+aliases|files|Files and archives (md, extract)|linux,macos|on|step:configs
+aliases|search|History search (hgrep)|linux,macos|on|step:configs
+aliases|docker|Docker and Compose (dps, dcu, dlog, dexec)|linux,macos|on|step:configs
+aliases|kubectl|kubectl (k, kgp, kl, kns)|linux,macos|off|step:configs
+aliases|github|GitHub CLI (ghpc, ghco, ghck)|linux,macos|off|step:configs
+
 tmux-plugins|tpm|TPM and plugins|linux,macos|on|step:tpm
 
 terminals|kitty|kitty|linux,macos|off|step:terminals
@@ -84,3 +97,17 @@ win-setup|hotkeys|AutoHotkey hotkeys|windows|off|step:hotkeys
 win-setup|wsl|WSL (Ubuntu)|windows|off|step:wsl
 win-setup|ssh-server|OpenSSH server (sshd)|windows|off|step:ssh-server
 win-setup|ssh-key|SSH key (ed25519)|windows|on|step:ssh-key
+
+# Alias groups in the PowerShell profile (configs/windows/profile.ps1, same
+# '# @group' markers). Need win-setup.profile.
+aliases|nav|Navigation and listing (up, ll, jd, jdl)|windows|on|step:profile
+aliases|search|Search and history (ff, sgrep, hgrep)|windows|on|step:profile
+aliases|system|System, processes, environment (psmem, killport, setenv)|windows|on|step:profile
+aliases|network|Network and Tailscale (myip, ports)|windows|on|step:profile
+aliases|git|git (gs, gc, gp, gl, gd, ...)|windows|on|step:profile
+aliases|docker|Docker and Compose (dps, dcu, dlog)|windows|on|step:profile
+aliases|kubectl|kubectl (k, ka, kc)|windows|off|step:profile
+aliases|terraform|Terraform|windows|off|step:profile
+aliases|dev|npm, yarn, pip, cargo|windows|off|step:profile
+aliases|tools|jq, lazygit, bat, chezmoi wrappers|windows|on|step:profile
+aliases|ai|AI CLI shortcuts (claudeyolo, ...)|windows|off|step:profile

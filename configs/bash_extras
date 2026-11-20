@@ -3,8 +3,13 @@
 # Only plain aliases + tiny portable helpers (no fzf, eza, python deps,
 # no 1-char names). macOS + Linux only: no GNU-only flags except behind
 # feature checks.
+#
+# Groups: lines between `# @group <name>` and `# @end` belong to the alias
+# group <name> in catalog.txt (aliases.<name>). setup.sh copies only the
+# groups ticked in the menu to ~/.bash_extras; lines outside a group (ref,
+# alg) are always copied. Groups do not nest.
 
-# --- navigation ---
+# --- always: reload, alias search ---
 # ref: reload everything (profile, rc, aliases, PATH) by starting a fresh login
 # shell of the same kind. Sourcing the rc again would add each PATH line twice
 # and skip ~/.zprofile / ~/.bash_profile (where Homebrew's PATH is set).
@@ -20,11 +25,51 @@ ref() {
         exec bash -l
     fi
 }
+# refa: apply the install repo again (menu, then install), reload tmux's
+# config when a tmux server runs, then reload the shell (ref). The repo is
+# $INSTALL_DIR, else ~/repos/install, else ~/install (bootstrap's default).
+refa() {
+  local dir="" d
+  for d in "${INSTALL_DIR:-}" "$HOME/repos/install" "$HOME/install"; do
+    if [ -n "$d" ] && [ -f "$d/Makefile" ] && [ -f "$d/setup.sh" ]; then dir="$d"; break; fi
+  done
+  [ -n "$dir" ] || { echo "refa: install repo not found (set INSTALL_DIR)" >&2; return 1; }
+  echo "refa: make install in $dir"
+  make --no-print-directory -C "$dir" install || { echo "refa: make install failed; shell not reloaded" >&2; return 1; }
+  if command -v tmux >/dev/null 2>&1 && tmux info >/dev/null 2>&1 && [ -f "$HOME/.tmux.conf" ]; then
+    tmux source-file "$HOME/.tmux.conf" && echo "refa: reloaded ~/.tmux.conf"
+  fi
+  ref
+}
+# alg <pat>: grep loaded aliases + matching function names.
+# `alias` prints name=value lines, so `alg psmem` shows its line.
+# Colors only when stdout is a terminal (not piped or redirected) and
+# NO_COLOR is unset (https://no-color.org).
+alg() {
+  [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
+  local color=never
+  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
+  alias | grep -i --color="${color}" -- "$*" || true
+  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
+}
+
+# _need <tool>: fail with a hint (exit 127) when <tool> is not installed.
+_need() { command -v "$1" >/dev/null 2>&1 || { echo "$1 is not installed" >&2; return 127; }; }
+
+# @group nav
+# --- navigation and listing ---
 alias dow='cd ~/Downloads'
 alias rep='mkdir -p ~/repos && cd ~/repos'
 alias cd1='cd ..'
 alias cd2='cd ../..'
 alias cd3='cd ../../..'
+# up [n]: go up n directories (default 1).
+up() {
+  local n="${1:-1}" d=""
+  case "$n" in ''|*[!0-9]*) echo "usage: up [levels]" >&2; return 1 ;; esac
+  while [ "$n" -gt 0 ]; do d="${d}../"; n=$((n - 1)); done
+  cd "${d:-.}" || return
+}
 
 # mkcd <dir>: mkdir -p + cd.
 mkcd() {
@@ -67,7 +112,9 @@ ltt() {
   ((${#files[@]})) || return 0
   ls -lthd -- "${files[@]}"
 }
+# @end
 
+# @group tmux
 # --- tmux ---
 
 alias ta='tmux attach || tmux new'
@@ -101,13 +148,17 @@ tmuxhelp() {
     "$HOME/.local/bin/tmuxhelp.sh" "$@"
   fi
 }
+# @end
 
+# @group git
 # --- git status/diff ---
 alias gs='git status'
 alias gst='git status'
 alias gss='git status --short'
 alias gd='git diff'
 alias gds='git diff --staged'
+alias gdw='git diff --word-diff' # word-level diff
+alias gstat='git diff --stat'
 alias gdry='git clean -ndf'
 
 # --- git add/commit ---
@@ -135,16 +186,35 @@ alias gl="git log --all --graph --decorate --color --pretty=format:'%C(yellow)%h
 alias glog='git log --oneline --graph --decorate -20'
 alias gfa='git fetch --all --tags --prune'
 alias grv='git remote -v'
+alias gwho='git log -1 --format="Author: %an <%ae>%nDate:   %ad%nCommit: %h %s"'
+alias ghash='git rev-parse --short HEAD'
+# glast [n]: the last n commits (default 1) with the files they changed.
+glast() { git log --stat --format='%C(yellow)%h%C(reset) %s %C(dim)(%cr, %an)%C(reset)' -n "${1:-1}"; }
+
+# --- git merge/rebase/cherry-pick ---
+alias gm='git merge'
+alias gmff='git merge --ff-only'
+alias gma='git merge --abort'
+alias grb='git rebase'
+alias grba='git rebase --abort'
+alias grbc='git rebase --continue'
+alias gcp='git cherry-pick'
+alias grev='git revert' # new commit that undoes an old one
 
 # --- git extras ---
 alias gundo='git reset --soft HEAD~1' # undo last commit, keep changes staged
 alias groot='git rev-parse --show-toplevel'
 alias gstash='git stash'
 alias gpop='git stash pop'
+alias gsl='git stash list --date=relative'
+alias grl='git reflog'
+alias gbd='git branch -d' # delete a merged branch
+alias gbg='git branch -vv | grep ": gone]"' # branches whose upstream is gone
+alias gtrack='git branch --set-upstream-to=origin/$(git rev-parse --abbrev-ref HEAD)'
+# @end
 
-# --- more keepers (macOS + Linux) ---
-
-# --- sudo/processes  ---
+# @group system
+# --- sudo/processes ---
 alias sudo2='sudo ' # trailing space: next word gets alias-expanded too
 # again: rerun the previous command as root (fc is POSIX; works in bash+zsh,
 # unlike !! inside aliases which only bash expands). `fc -ln -1` prints the
@@ -194,7 +264,9 @@ duh() {
     printf "%6.1f%s\t%s\n", s, u, $2 }'
   if [ -z "${ZSH_VERSION:-}" ]; then shopt -u nullglob; fi
 }
+# @end
 
+# @group network
 # --- network/download ---
 # myip: public IP (curl ships on both; matches dotfiles myip).
 alias myip='curl -fsS --max-time 5 https://ipinfo.io/ip; echo'
@@ -212,7 +284,9 @@ down() {
 # serve [port]: loopback-only static server from stdlib python3.
 serve() { python3 -m http.server "${1:-8000}" --bind 127.0.0.1; }
 alias ping5='ping -c 5' # -c works on both (avoid -W: syntax differs)
+# @end
 
+# @group files
 # --- files/archives ---
 alias md='mkdir -p'
 # extract <file>: tar/zip only (no python; mirrors dotfiles extract.sh core).
@@ -227,18 +301,75 @@ extract() {
     *) echo "extract: unknown format: $1" >&2; return 1 ;;
   esac
 }
+# @end
 
+# @group search
 # --- search ---
 # hgrep <pat>: grep shell history.
 hgrep() { history | grep -i -- "$@"; }
-# alg <pat>: grep loaded aliases + matching function names.
-# `alias` prints name=value lines, so `alg psmem` shows its line.
-# Colors only when stdout is a terminal (not piped or redirected) and
-# NO_COLOR is unset (https://no-color.org).
-alg() {
-  [ $# -ge 1 ] || { echo "usage: alg <pattern>" >&2; return 1; }
-  local color=never
-  if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then color=always; fi
-  alias | grep -i --color="${color}" -- "$*" || true
-  declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
+# @end
+
+# @group docker
+# --- docker and compose ---
+# Functions, not aliases: without docker they say so (exit 127) instead of
+# `command not found`, and they take extra arguments.
+d() { _need docker || return; command docker "$@"; }
+dc() { _need docker || return; command docker compose "$@"; }
+dcu() { _need docker || return; command docker compose up -d "$@"; }
+dcd() { _need docker || return; command docker compose down "$@"; }
+dcr() { _need docker || return; command docker compose restart "$@"; }
+dcl() { _need docker || return; command docker compose logs -f --tail 50 "$@"; }
+dps() { _need docker || return; command docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' "$@"; }
+dpsa() { _need docker || return; command docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' "$@"; }
+dport() { _need docker || return; command docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' "$@"; }
+di() { _need docker || return; command docker images "$@"; }
+dlog() { _need docker || return; command docker logs -f --tail 100 "$@"; }
+# dexec <container> [cmd]: shell into a container (default sh).
+dexec() {
+  _need docker || return
+  [ $# -ge 1 ] || { echo "usage: dexec <container> [command]" >&2; return 1; }
+  local c="$1"; shift
+  [ $# -gt 0 ] || set -- sh
+  command docker exec -it "$c" "$@"
 }
+dmounts() { _need docker || return; command docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.Type}}, rw={{.RW}}){{println}}{{end}}' "$@"; }
+# dprune: show disk use, ask, then remove stopped containers, dangling images
+# and unused networks (volumes are kept).
+dprune() {
+  _need docker || return
+  command docker system df
+  local a
+  printf 'Remove stopped containers, dangling images, unused networks? [y/N] '
+  read -r a
+  case "$a" in [yY]*) command docker system prune -f "$@" ;; *) echo "kept" ;; esac
+}
+# @end
+
+# @group kubectl
+# --- kubectl (generic; no cluster-specific names) ---
+k() { _need kubectl || return; command kubectl "$@"; }
+kgp() { k get pods "$@"; }
+kgs() { k get svc "$@"; }
+kgd() { k get deployments "$@"; }
+kga() { k get all "$@"; }
+kl() { k logs -f --tail 100 "$@"; }
+kd() { k describe "$@"; }
+kctx() { k config current-context; }
+# kns [namespace]: show or set the namespace of the current context.
+kns() {
+  if [ $# -eq 0 ]; then k config view --minify --output 'jsonpath={..namespace}'; echo
+  else k config set-context --current --namespace="$1"; fi
+}
+# @end
+
+# @group github
+# --- GitHub CLI (gh) ---
+gh_() { _need gh || return; command gh "$@"; }
+ghpc() { gh_ pr create --fill "$@"; }   # PR from the current branch
+ghpv() { gh_ pr view --comments "$@"; } # PR body and review threads
+ghpd() { gh_ pr diff "$@"; }
+ghco() { gh_ pr checkout "$@"; }        # ghco <number>
+ghck() { gh_ pr checks "$@"; }          # CI checks of this branch's PR
+ghst() { gh_ status "$@"; }
+ghweb() { gh_ browse "$@"; }
+# @end
