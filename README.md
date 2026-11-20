@@ -445,7 +445,10 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make test-bash32` | unit tests + macOS dry-run under bash 3.2 |
 | `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers, then a rerun that must change nothing |
 | `make test-all` | every test above |
-| `make sync-dotfiles` | refresh `tmux.conf` and `zshrc` from the dotfiles repo |
+| `make dotfiles-drift` | compare the ticked mirrored files with the dotfiles repo (`ARGS=-v` for diffs) |
+| `make dotfiles-select` | checkbox menu: tick which mirrored files to check and sync |
+| `make dotfiles-list` | list the mirrored files and which are ticked |
+| `make sync-dotfiles` | copy the ticked drifted files from dotfiles, asking per file |
 
 ## CI
 
@@ -463,10 +466,32 @@ On a private repo, macOS minutes count 10x against the Actions quota.
 
 ## Sync configs from dotfiles
 
+Some configs here are copies of files in the dotfiles repo. They are listed in
+[`dotfiles.txt`](dotfiles.txt), one line each:
+`group|item|label|default|install file|dotfiles file|stop|ignore`.
+
+- **stop:** compare only the lines above the first line that starts with this
+  text. `configs/zshrc` uses it for the alias loader block, which exists only
+  here.
+- **ignore:** an extended regex. Lines matching it on either side are left out,
+  for headers that differ on purpose. A file with an ignore regex is
+  check-only: sync would drop this repo's own lines, so merge it by hand.
+
+Which files you check is your choice:
+
 ```sh
-cp ../dotfiles/dot_tmux.conf configs/tmux.conf
+make dotfiles-select   # checkbox menu (same keys as the installer), saves your ticks
+make dotfiles-list     # [x]/[ ] per file
+make dotfiles-drift    # OK / DRIFT / MISSING per ticked file; exit 1 on drift
+make dotfiles-drift ARGS="-v"          # with diffs (- dotfiles only, + only here)
+make dotfiles-drift ARGS="tmux zshrc"  # only these, ticked or not (item, group.item or group)
+make sync-dotfiles ARGS="-n"           # show what sync would change
+make sync-dotfiles                     # show each change, ask y/N, then copy
 ```
 
-Or `make sync-dotfiles` (reads `DOTFILES=../dotfiles`): it copies
-`dot_tmux.conf` and rebuilds `configs/zshrc` from `dot_zshrc` plus the alias
-loader block, then shows the diff.
+Ticks are saved per user in `~/.local/bootstrap/dotfiles-drift` (`key=1` or
+`key=0`; edit by hand or with the menu). Files without a tick use the manifest
+default. Each DRIFT line shows the last commit date on each side, so you can see
+which side moved. Sync is never silent: it prints the lines this repo would
+lose, asks before each file (no terminal means no; `-y` says yes), and keeps the
+zshrc alias block. `DOTFILES=<path>` points at another checkout.
