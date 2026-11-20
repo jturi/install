@@ -8,7 +8,7 @@
 
 .PHONY: help
 .PHONY: install install-yes dry-run select packages configs terminals ssh-key ssh-server zsh-default windows
-.PHONY: lint test test-bash32 test-docker test-windows check test-all
+.PHONY: lint test test-bash32 test-docker test-windows check test-all hooks precommit
 .PHONY: sync-dotfiles
 
 SHELL_FILES := setup.sh bootstrap.sh lib/*.sh tests/*.sh
@@ -97,6 +97,14 @@ windows: ## Run setup.ps1 from WSL (needs powershell.exe)
 	@w=$$(wslpath -w setup.ps1); powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$w" $(ARGS)
 
 check: lint test ## lint + unit tests (fast)
+
+hooks: ## Install the pre-commit hooks (secrets, keys, hygiene, lint) in this clone
+	@command -v pre-commit >/dev/null 2>&1 || { echo 'pre-commit is not installed: brew install pre-commit (or pipx install pre-commit)' >&2; exit 1; }
+	pre-commit install
+
+precommit: ## Run every pre-commit hook on all files
+	@command -v pre-commit >/dev/null 2>&1 || { echo 'pre-commit is not installed: brew install pre-commit (or pipx install pre-commit)' >&2; exit 1; }
+	pre-commit run --all-files
 
 test-all: lint test test-bash32 test-docker ## Every test, including containers
 

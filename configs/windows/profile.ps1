@@ -790,10 +790,10 @@ function Set-UserEnv {
 
     # Set the variable permanently in the Windows User registry
     [Environment]::SetEnvironmentVariable($Name, $Value, [System.EnvironmentVariableTarget]::User)
-    
+
     # Set the variable temporarily for the current PowerShell session so it can be used immediately
     Set-Item -Path "Env:\$Name" -Value $Value
-    
+
     Write-Host "Environment variable '$Name' has been set successfully." -ForegroundColor Green
 }
 
@@ -805,9 +805,9 @@ function Get-UserEnv {
         [Parameter(Position = 0)]
         [string]$Pattern = ""
     )
-    
+
     $vars = Get-ChildItem Env: | Where-Object { $_.Name -match $Pattern -or $_.Value -match $Pattern } | Sort-Object Name
-    
+
     if ($vars.Count -eq 0) {
         Write-Host "No environment variables found matching '$Pattern'." -ForegroundColor Yellow
         return
@@ -847,7 +847,7 @@ function Remove-UserEnv {
 
     # Search for variables matching the pattern (case-insensitive)
     $vars = Get-ChildItem Env: | Where-Object { $_.Name -match$Pattern } | Sort-Object Name
-    
+
     if ($vars.Count -eq 0) {
         Write-Host "No environment variables found matching '$Pattern'." -ForegroundColor Yellow
         return
@@ -855,7 +855,7 @@ function Remove-UserEnv {
 
     # Generate the numbered list and display it
     $map = @{}; $id = 1
-    
+
     Write-Host "`nSelect an environment variable to delete:" -ForegroundColor Cyan
     $displayList = @()
     foreach ($v in $vars) {
@@ -867,13 +867,13 @@ function Remove-UserEnv {
         }
         $id++
     }
-    
+
     # Print the table to the console
     $displayList | Format-Table -AutoSize | Out-String | Write-Host
 
     # Prompt the user for the ID
     $selection = Read-Host "Enter the ID to delete (or press Enter to cancel)"
-    
+
     if ([string]::IsNullOrWhiteSpace($selection)) {
         Write-Host "Operation cancelled." -ForegroundColor DarkGray
         return
@@ -898,7 +898,7 @@ function Remove-UserEnv {
     Write-Host "-------------------------------------" -ForegroundColor Cyan
 
     $confirm = Read-Host "Are you sure you want to delete this variable? (y/n)"
-    
+
     if ($confirm.Trim().ToLower() -ne 'y') {
         Write-Host "Deletion cancelled." -ForegroundColor DarkGray
         return
@@ -906,7 +906,7 @@ function Remove-UserEnv {
 
     # Execute the deletion permanently and locally
     [Environment]::SetEnvironmentVariable($nameToDelete,$null, [System.EnvironmentVariableTarget]::User)
-    
+
     if (Test-Path "Env:\$nameToDelete") {
         Remove-Item "Env:\$nameToDelete"
     }

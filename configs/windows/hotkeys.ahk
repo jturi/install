@@ -6,7 +6,7 @@ SetControlDelay(0)
 CoordMode("Mouse", "Screen")
 
 ;; Shift+Win+Arrow keys, in Windows 11 move windows.
-;; This shortcut will  stopped working if you switch off the "Snap windows " function (in System / Multitasking ). 
+;; This shortcut will  stopped working if you switch off the "Snap windows " function (in System / Multitasking ).
 
 ;; Load personal.ahk (optional; setup.ps1 creates it from personal.ahk.example):
 #Include *i personal.ahk

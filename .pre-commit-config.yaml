@@ -1,0 +1,60 @@
+# Pre-commit hooks: secrets, private keys, file hygiene, shell/PowerShell lint.
+# Install once per clone:  make hooks
+# Run on every file:       make precommit   (or: pre-commit run --all-files)
+# Revs are frozen to commit SHAs; `pre-commit autoupdate --freeze` bumps them.
+# Local only: no CI runs these automatically.
+
+# Byte-exact fixtures (CRLF and a BOM are the point of config.input).
+exclude: ^tests/fixtures/config\.
+
+repos:
+  # Secrets: API keys, tokens, passwords in the staged changes.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      # Sensitive files
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      # Breakage
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      # Hygiene (auto-fix; re-stage and commit again)
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: ['--markdown-linebreak-ext=md']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: fix-byte-order-marker
+
+  - repo: local
+    hooks:
+      # Credential-looking files that should never be committed.
+      - id: no-credential-files
+        name: no credential files (.env, id_*, *.pem, *.key, ...)
+        entry: credential-looking file; keep it out of the repo
+        language: fail
+        files: (^|/)(\.env(\..*)?|id_(rsa|ecdsa|ed25519|dsa)|.*\.(pem|key|p12|pfx|kdbx)|\.netrc|\.npmrc|\.pypirc|credentials(\.json)?|settings\.local\.json)$
+        exclude: \.example$
+      # Windows PowerShell 5.1 misreads UTF-8 without a BOM: keep .ps1/.ahk ASCII.
+      - id: powershell-ascii
+        name: PowerShell and AutoHotkey files are ASCII only
+        entry: '[^\x00-\x7F]'
+        language: pygrep
+        files: \.(ps1|ahk)$
+      # shellcheck + PowerShell parse, same as `make lint`.
+      - id: make-lint
+        name: make lint (shellcheck, PowerShell parse)
+        entry: make lint
+        language: system
+        pass_filenames: false
+        files: (\.(sh|ps1)$|^configs/bash_|^configs/zshrc$|^Makefile$)
