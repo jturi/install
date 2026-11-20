@@ -76,6 +76,9 @@ check sshd-arch "openssh" "$(pkg_name arch openssh-server)"
 check sshd-rhel "openssh-server" "$(pkg_name rhel openssh-server)"
 check dns-fedora "bind-utils" "$(pkg_name fedora dnsutils)"
 check ping-debian "iputils-ping" "$(pkg_name debian iputils)"
+# Debian 13 has no dnsutils package; apt installs bind9-dnsutils for the name
+# but dpkg-query then reports dnsutils missing.
+check dns-debian "bind9-dnsutils" "$(pkg_name debian dnsutils)"
 check macos-builtin-skipped "" "$(pkg_name macos openssh-client)"
 check zsh-arch "zsh" "$(pkg_name arch zsh)"
 check macos-zsh-builtin "" "$(pkg_name macos zsh)"
@@ -927,6 +930,11 @@ check summary-failed-where "1" "$(grep -cE -- '- failed at lib/[a-z]+\.sh:[0-9]+
   step_fails() { true; false; echo not-reached; }
   run_step bad step_fails; set +e; print_summary) 2>&1)")"
 check summary-where-only-failed "1" "$(grep -c 'failed at' <<<"${sum_out}")"
+# A function that just returns 1 has already said why (warn); "failed at
+# ...: return 1" would add nothing.
+check summary-no-where-for-return "0" "$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR=""
+  step_says_why() { warn "2 items missing"; return 1; }
+  run_step chk step_says_why; set +e; print_summary) 2>&1 | grep -c 'failed at')"
 check summary-failed-run-where "1" "$(grep -c -- '- failed at lib/pkg.sh:[0-9]*: brew install nopkg' <<<"$( (STEP_LABELS=() STEP_STATUS=() STEP_TIME=() RUN_DIR="" VERBOSE=0
   brew() { echo "No available formula with the name nopkg"; return 1; }
   run_step packages pkg_install macos nopkg; set +e; print_summary) 2>&1)")"

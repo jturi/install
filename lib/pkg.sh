@@ -15,6 +15,9 @@ pkg_name() {
     arch:procps | fedora:procps | rhel:procps) echo procps-ng ;;
     fedora:iproute2 | rhel:iproute2) echo iproute ;;
     debian:iputils) echo iputils-ping ;;
+    # Debian 13 dropped the dnsutils transitional package (Debian 11+, Ubuntu
+    # 20.04+ have bind9-dnsutils).
+    debian:dnsutils) echo bind9-dnsutils ;;
     arch:dnsutils) echo bind ;;
     fedora:dnsutils | rhel:dnsutils) echo bind-utils ;;
     debian:which) ;;
