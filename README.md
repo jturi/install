@@ -446,6 +446,32 @@ Run `make` (or `make help`) to list them. Extra `setup.sh` flags go in
 | `make test-docker` | real run in Arch, Ubuntu, Debian, Fedora, Rocky, Alma containers, then a rerun that must change nothing |
 | `make test-all` | every test above |
 | `make sync-dotfiles` | refresh `tmux.conf` and `zshrc` from the dotfiles repo |
+| `make hooks` | install the pre-commit hooks in this clone |
+| `make precommit` | run every pre-commit hook on all files |
+
+## Pre-commit hooks
+
+`.pre-commit-config.yaml` checks each commit before it is made. Install
+[pre-commit](https://pre-commit.com) (`brew install pre-commit` or
+`pipx install pre-commit`), then run `make hooks` once per clone.
+
+- **Secrets:** gitleaks scans the staged changes for API keys, tokens and
+  passwords. `detect-private-key` blocks PEM/OpenSSH private keys.
+- **Credential files:** `.env`, `id_rsa`/`id_ed25519`, `*.pem`, `*.key`,
+  `*.p12`, `.netrc`, `.npmrc`, `credentials.json`, `settings.local.json`
+  cannot be committed (`*.example` files can).
+- **Hygiene (auto-fix):** trailing whitespace, final newline, LF line endings,
+  UTF-8 BOM. A fixed file fails the commit once; stage it and commit again.
+- **Breakage:** merge conflict markers, case-only name clashes, broken
+  symlinks, invalid YAML, files over 1 MB, shebang vs executable bit.
+- **Lint:** `make lint` (shellcheck, PowerShell parse) when shell or
+  PowerShell files change, and `.ps1`/`.ahk` files must be ASCII only
+  (Windows PowerShell 5.1 misreads UTF-8 without a BOM).
+
+`tests/fixtures/config.*` is skipped: its CRLF and BOM are the point. The
+hooks run only locally; CI does not run them. To scan the whole history:
+`pre-commit run gitleaks --all-files` only sees staged changes, so use
+`gitleaks git .` directly.
 
 ## CI
 
