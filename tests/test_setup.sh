@@ -8,9 +8,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT}/setup.sh"
 set +e
 
-WORK="$(mktemp -d)"
+# Physical path: macOS mktemp gives /var/..., which is a symlink to /private/var.
+WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${WORK}"' EXIT
 FAILS=0
+# Stand-ins for sshd that accept or reject any config. Not /bin/true: macOS
+# has it only in /usr/bin.
+mkdir -p "${WORK}/bin"
+printf '#!/bin/sh\nexit 0\n' >"${WORK}/bin/sshd-ok"
+printf '#!/bin/sh\nexit 1\n' >"${WORK}/bin/sshd-bad"
+chmod +x "${WORK}/bin/sshd-ok" "${WORK}/bin/sshd-bad"
 # Tests may run under WSL: never touch the real Windows home or Scoop.
 echo "6.0.0-generic" >"${WORK}/osrelease-linux"
 KERNEL_RELEASE_FILE="${WORK}/osrelease-linux"
@@ -338,7 +345,8 @@ mkdir -p "${t_home}"
 TARGET_HOME="${t_home}" install_terminal_configs linux kitty >/dev/null
 check terminal-only-kitty-config "yes/no" "$([[ -e "${t_home}/.config/kitty/kitty.conf" ]] && echo yes || echo no)/$([[ -e "${t_home}/.config/ghostty/config" ]] && echo yes || echo no)"
 check terminal-only-kitty-package "kitty" "$(as_root() { run "$@"; }; DRY_RUN=1 install_terminal_packages fedora kitty 2>&1 | grep -o 'install -y.*' | sed 's/install -y //')"
-check terminal-only-ghostty-brew "ghostty" "$(ensure_brew() { :; }; DRY_RUN=1 install_terminal_packages macos ghostty 2>&1 | grep -o 'cask.*' | sed 's/cask //')"
+# brew is stubbed: a Ghostty cask on the developer's Mac must not count.
+check terminal-only-ghostty-brew "ghostty" "$(ensure_brew() { :; }; brew() { :; }; DRY_RUN=1 install_terminal_packages macos ghostty 2>&1 | grep -o 'cask.*' | sed 's/cask //')"
 
 # WSL: WezTerm through Scoop on the Windows side, config in the Windows home.
 echo "6.18.33.2-microsoft-standard-WSL2" >"${WORK}/osrelease-wsl"
@@ -665,7 +673,7 @@ mkdir -p "${sshdir}"
 printf 'Port 22\n' >"${sshdir}/sshd_config"
 touch "${sshdir}/ssh_host_ed25519_key"
 ssh_stubs='as_root() { run "$@"; }; root_quiet() { "$@"; }; reload_sshd() { echo reloaded; }; SSHD_RUN_DIR="${WORK}/run-sshd"'
-local_only() { (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; restrict_ssh_local_only debian) 2>&1; }
+local_only() { (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo "${WORK}/bin/sshd-ok"; }; restrict_ssh_local_only debian) 2>&1; }
 out="$(local_only)"; rc=$?
 dropin="${sshdir}/sshd_config.d/20-local-network-only.conf"
 check local-only-rc "0" "${rc}"
@@ -682,7 +690,7 @@ check local-only-rerun-one-include "1" "$(grep -c '^Include' "${sshdir}/sshd_con
 check local-only-rerun-no-reload "0" "$(grep -c reloaded <<<"${out}")"
 # sshd rejects the config: the drop-in is removed and the step fails.
 rm -f "${dropin}"
-out="$( (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/false; }; restrict_ssh_local_only debian) 2>&1)"; rc=$?
+out="$( (eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo "${WORK}/bin/sshd-bad"; }; restrict_ssh_local_only debian) 2>&1)"; rc=$?
 check local-only-rejected-rc "1" "${rc}"
 check local-only-rejected-removed "no" "$([[ -e "${dropin}" ]] && echo yes || echo no)"
 # No SSH server installed: only warns.
@@ -794,10 +802,10 @@ check check-ok-line "1" "$(grep -c '^  OK      TPM and plugins$' <<<"${out}")"
 out="$(ck extras.ssh-key)"
 check check-ssh-key-skipped "1" "$(grep -c '^  SKIPPED SSH key (no terminal for a passphrase)$' <<<"${out}")"
 check check-ssh-key-skipped-rc "rc=0" "$(grep -o 'rc=[0-9]' <<<"${out}")"
-out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; check_selection debian; echo "rc=$?") 2>&1)"
+out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo "${WORK}/bin/sshd-ok"; }; check_selection debian; echo "rc=$?") 2>&1)"
 check check-local-only-missing "1" "$(grep -c '^  MISSING Restrict SSH' <<<"${out}")"
-(eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; restrict_ssh_local_only debian) >/dev/null 2>&1
-out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo /bin/true; }; check_selection debian; echo "rc=$?") 2>&1)"
+(eval "${ssh_stubs}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo "${WORK}/bin/sshd-ok"; }; restrict_ssh_local_only debian) >/dev/null 2>&1
+out="$( (load_catalog debian; only_ticked extras.ssh-local-only; TARGET_HOME="${ck_home}"; SSH_CONFIG_DIR="${sshdir}"; sshd_path() { echo "${WORK}/bin/sshd-ok"; }; check_selection debian; echo "rc=$?") 2>&1)"
 check check-local-only-ok "1" "$(grep -c '^  OK      Restrict SSH' <<<"${out}")"
 out="$( (load_catalog debian; only_ticked shell.tmux; pkg_installed() { [[ "$2" == tmux ]]; }; check_selection debian; echo "rc=$?") 2>&1)"
 check check-pkg-ok "1" "$(grep -c '^  OK      tmux$' <<<"${out}")"

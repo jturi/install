@@ -41,6 +41,16 @@ for sh in sh bash zsh; do
   check "bootstrap-${sh}-backups" test "$(find "${home}" -maxdepth 1 -name 'install.bak.*' | wc -l)" -eq 2
 done
 
+# Run a command string in a pseudo-terminal: util-linux and BSD (macOS)
+# script(1) take different arguments.
+pty_run() {
+  if script --version 2>/dev/null | grep -q util-linux; then
+    script -qec "$1" /dev/null
+  else
+    script -q /dev/null sh -c "$1"
+  fi
+}
+
 # After a real run with a terminal, bootstrap starts a fresh interactive shell
 # (so ~/.bashrc and the new aliases load). Stub setup.sh and $SHELL; `script`
 # gives the run a /dev/tty.
@@ -53,7 +63,7 @@ if command -v script >/dev/null 2>&1; then
   # shellcheck disable=SC2329 # called through check
   shell_run() {
     HOME="${TMP}/home-shell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x \
-      script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >"${TMP}/shell-out" 2>&1
+      pty_run "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" </dev/null >"${TMP}/shell-out" 2>&1
   }
   check bootstrap-new-shell-runs shell_run
   check bootstrap-new-shell-interactive grep -qx -- '-i' "${TMP}/shell-args"
@@ -61,7 +71,7 @@ if command -v script >/dev/null 2>&1; then
   # shellcheck disable=SC2329 # called through check
   no_shell_run() {
     HOME="${TMP}/home-noshell" BOOTSTRAP_URL="file://${TMP}/stub.tgz" GITHUB_TOKEN=x BOOTSTRAP_NO_SHELL=1 \
-      script -qec "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" /dev/null </dev/null >/dev/null 2>&1
+      pty_run "SHELL='${TMP}/fakeshell' sh '${ROOT}/bootstrap.sh'" </dev/null >/dev/null 2>&1
   }
   check bootstrap-no-shell-opt-out no_shell_run
   check bootstrap-no-shell-opt-out-none test ! -e "${TMP}/shell-args"
