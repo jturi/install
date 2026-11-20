@@ -55,6 +55,18 @@ alg() {
   declare -F | awk '{print $NF}' | grep -i --color="${color}" -- "$*" || true
 }
 
+# GNU make 4 from Homebrew ahead of macOS's make 3.81 (some Makefiles need 4+),
+# in bash and zsh. $HOMEBREW_PREFIX comes from `brew shellenv` (~/.zprofile);
+# the fixed prefixes cover shells that did not run it. No brew call: it would
+# slow every shell start. Added once, so re-sourcing does not repeat it.
+for _gm in "${HOMEBREW_PREFIX:-/opt/homebrew}" /usr/local; do
+  if [ -d "$_gm/opt/make/libexec/gnubin" ]; then
+    case ":$PATH:" in *":$_gm/opt/make/libexec/gnubin:"*) ;; *) PATH="$_gm/opt/make/libexec/gnubin:$PATH" ;; esac
+    break
+  fi
+done
+unset _gm
+
 # _need <tool>: fail with a hint (exit 127) when <tool> is not installed.
 _need() { command -v "$1" >/dev/null 2>&1 || { echo "$1 is not installed" >&2; return 127; }; }
 
@@ -356,7 +368,7 @@ dprune() {
 # @end
 
 # @group kubectl
-unalias k kgp kgs kgd kga kl kd kctx kns 2>/dev/null || true # a same-name alias breaks the function definitions below
+unalias k kgp kgs kgd kga kl kd kdel kctx kns 2>/dev/null || true # a same-name alias breaks the function definitions below
 # --- kubectl (generic; no cluster-specific names) ---
 k() { _need kubectl || return; command kubectl "$@"; }
 kgp() { k get pods "$@"; }
@@ -365,6 +377,7 @@ kgd() { k get deployments "$@"; }
 kga() { k get all "$@"; }
 kl() { k logs -f --tail 100 "$@"; }
 kd() { k describe "$@"; }
+kdel() { k delete "$@"; }
 kctx() { k config current-context; }
 # kns [namespace]: show or set the namespace of the current context.
 kns() {

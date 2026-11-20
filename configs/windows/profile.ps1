@@ -448,7 +448,8 @@ if (Get-Command kubectl -ErrorAction SilentlyContinue) {
     function ka      { kubectl apply -f @args }
     function kr      { kubectl replace -f @args }
     function kdiff   { kubectl diff -f @args }
-    function kd      { kubectl delete -f @args }
+    function kd      { kubectl describe @args }
+    function kdel    { kubectl delete @args }
     function kev     { kubectl get events -f @args }
     function kc      { kubectl config get-contexts @args }
     function kall    { kubectl get po,deploy,statefulset,svc,ingress,pvc }

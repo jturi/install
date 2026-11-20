@@ -427,6 +427,15 @@ $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]
 Check 'step-check-sshkey-skipped' 'True|0' (([string]($SkipOut -match '(?m)^  SKIPPED +SSH key')) + '|' + $SkipMissing)
 $SkipOut = Invoke-CheckStep -Catalog $SkipCat -HomeDir $SkipHome -Missing ([ref]$SkipMissing) -Interactive $true | Out-String
 Check 'step-check-sshkey-missing' 'True|1' (([string]($SkipOut -match '(?m)^  MISSING +SSH key')) + '|' + $SkipMissing)
+# Alias groups without the PowerShell profile item: SKIPPED, not missing.
+$AliasRow = New-Object PSObject -Property @{ Group = 'aliases'; Item = 'git'; Label = 'git (gs, gc)'; Action = 'step:profile'; Selected = $true }
+$ProfRowOff = New-Object PSObject -Property @{ Group = 'win-setup'; Item = 'profile'; Label = 'PowerShell profile'; Action = 'step:profile'; Selected = $false }
+$AliasMissing = -1
+$AliasOut = Invoke-CheckStep -Catalog @($ProfRowOff, $AliasRow) -DocumentsDir (Join-Path $Work 'no-docs') -Missing ([ref]$AliasMissing) | Out-String
+Check 'step-check-alias-needs-profile' 'True|0' (([string]($AliasOut -match '(?m)^  SKIPPED +git \(gs, gc\) \(needs PowerShell profile\)')) + '|' + $AliasMissing)
+$ProfRowOff.Selected = $true
+$AliasOut = Invoke-CheckStep -Catalog @($ProfRowOff, $AliasRow) -DocumentsDir (Join-Path $Work 'no-docs') -Missing ([ref]$AliasMissing) | Out-String
+Check 'step-check-alias-missing-with-profile' 'True|2' (([string]($AliasOut -match '(?m)^  MISSING +git \(gs, gc\)')) + '|' + $AliasMissing)
 
 # Scoop writes scoop-install.json (current) or install.json (older): both count.
 $NewApp = Join-Path $env:SCOOP (Join-Path 'apps' (Join-Path 'wezterm' '20240203'))

@@ -60,6 +60,7 @@ function Invoke-CheckStep {
   $Counts = @{ OK = 0; MISSING = 0; SKIPPED = 0 }
   $Rows = @()
   foreach ($Name in @('git', 'make')) { $Rows += , @{ Label = $Name; Group = 'base'; Ok = (Test-CheckCommand $Name); Skip = $false } }
+  $ProfileTicked = @($Catalog | Where-Object { $_.Selected -and $_.Item -eq 'profile' -and $_.Action -eq 'step:profile' }).Count -gt 0
   foreach ($Row in $Catalog) {
     if (-not $Row.Selected) { continue }
     # A check that throws counts as missing; it must not stop the others.
@@ -71,6 +72,8 @@ function Invoke-CheckStep {
     # declined or is staged until a restart.
     if (-not $Ok -and $Row.Action -eq 'step:ssh-key' -and -not (Test-StepSshConsole -Interactive $Interactive)) { $Skip = 'no console' }
     elseif (-not $Ok -and $Row.Action -eq 'step:ssh-server' -and $script:StepSshServerSkip) { $Skip = [string]$script:StepSshServerSkip }
+    # Alias groups live in the profile: without the profile item they are not installed.
+    if ($Row.Group -eq 'aliases' -and $Row.Action -eq 'step:profile' -and -not $ProfileTicked) { $Skip = 'needs PowerShell profile' }
     $Rows += , @{ Label = $Row.Label; Group = $Row.Group; Ok = $Ok; Skip = $Skip }
   }
   Write-Output (Format-CheckRow 'Status' 'Item' 'Group')

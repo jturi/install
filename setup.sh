@@ -994,8 +994,10 @@ install_aliases() {
     dst="${TARGET_HOME}/.bash_aliases2"
   fi
   install_file "${src}" "${dst}"
+  # The filtered copy goes in RUN_DIR, which the exit trap removes even when
+  # install_file dies; without RUN_DIR (direct calls) a mktemp file is used.
   local extra_tmp
-  extra_tmp="$(mktemp)"
+  if [[ -n "${RUN_DIR}" && -d "${RUN_DIR}" ]]; then extra_tmp="${RUN_DIR}/bash_extras"; else extra_tmp="$(mktemp)"; fi
   filter_alias_groups "${extra_src}" >"${extra_tmp}"
   install_file "${extra_tmp}" "${TARGET_HOME}/.bash_extras"
   rm -f "${extra_tmp}"

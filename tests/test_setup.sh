@@ -187,6 +187,17 @@ check refa-no-repo "1" "$(INSTALL_DIR="" HOME="${WORK}/refa_home" bash -c 'sourc
 # A same-name alias loaded earlier (~/.bash_aliases) must not break the
 # function definitions: every function in bash_extras is unaliased first.
 check extras-survive-user-aliases "function function function" "$(bash -c 'shopt -s expand_aliases; for n in $(grep -oE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$0" | tr -d "()"); do alias "$n=true"; done; source "$0" && type -t dps up refa | xargs' "${ROOT}/configs/bash_extras" 2>&1)"
+# GNU make's gnubin first on PATH from $HOMEBREW_PREFIX, once even when re-sourced.
+gm_pre="${WORK}/brewpre"
+mkdir -p "${gm_pre}/opt/make/libexec/gnubin"
+check extras-gnubin-first "${gm_pre}/opt/make/libexec/gnubin" "$(HOMEBREW_PREFIX="${gm_pre}" bash -c 'source "$0"; source "$0"; printf "%s\n" "${PATH%%:*}"' "${ROOT}/configs/bash_extras")"
+check extras-gnubin-once "1" "$(HOMEBREW_PREFIX="${gm_pre}" bash -c 'source "$0"; source "$0"; printf "%s\n" "$PATH" | tr ":" "\n" | grep -cxF "$HOMEBREW_PREFIX/opt/make/libexec/gnubin"' "${ROOT}/configs/bash_extras")"
+check extras-gnubin-zsh-free "0" "$(grep -c 'brew --prefix' "${ROOT}/configs/zshrc" "${ROOT}/configs/bash_extras" | awk -F: '{s+=$2} END {print s}')"
+check extras-kd-kdel "describe delete" "$(bash -c 'source "$0"; k() { echo "$1"; }; echo "$(kd) $(kdel)"' "${ROOT}/configs/bash_extras")"
+# With RUN_DIR (a real run), the filtered copy lives there and is removed.
+rd_home="${WORK}/rundir_home"
+mkdir -p "${rd_home}" "${WORK}/rundir"
+check extras-tmp-in-run-dir "0" "$(TARGET_HOME="${rd_home}"; RUN_DIR="${WORK}/rundir"; install_aliases >/dev/null; find "${RUN_DIR}" -mindepth 1 | wc -l | tr -d ' ')"
 # The docker helpers say what is missing instead of `command not found`.
 check groups-need-docker "127" "$(bash -c 'source "$0"; PATH=/nonexistent; dps >/dev/null 2>&1; echo $?' "${ROOT}/configs/bash_extras")"
 

@@ -248,8 +248,10 @@ package manager:
 - macOS already has less, curl, ssh, lsof, file, tar, zip and the other base
   tools, so brew installs only: tmux, vim, nano, bash (5.x), bash-completion@2,
   fzf, htop, make, git, wget, rsync, tree, jq.
-- `~/.zshrc` puts Homebrew's GNU make (`<prefix>/opt/make/libexec/gnubin`)
-  ahead of the system make, so `make` is make 4.
+- `~/.bash_extras` (bash and zsh) puts Homebrew's GNU make
+  (`<prefix>/opt/make/libexec/gnubin`) ahead of the system make, so `make` is
+  make 4. It uses `$HOMEBREW_PREFIX`, else `/opt/homebrew` or `/usr/local`,
+  without calling `brew`.
 - `bash-completion@2` needs bash 4.2 or newer, so the `bash 5 (Homebrew)` item
   is on by default. The alias loader sources
   `$HOMEBREW_PREFIX/etc/profile.d/bash_completion.sh` in bash only (zsh
@@ -368,7 +370,7 @@ The menu has an **aliases** group with one item per section of
 | files | on | `md`, `extract` |
 | search | on | `hgrep` |
 | docker | on | `d`, `dc`, `dcu`, `dcd`, `dcr`, `dcl`, `dps`, `dpsa`, `dport`, `di`, `dlog`, `dexec`, `dmounts`, `dprune` |
-| kubectl | off | `k`, `kgp`, `kgs`, `kgd`, `kga`, `kl`, `kd`, `kctx`, `kns` |
+| kubectl | off | `k`, `kgp`, `kgs`, `kgd`, `kga`, `kl`, `kd` (describe), `kdel` (delete), `kctx`, `kns` |
 | github | off | `ghpc`, `ghpv`, `ghpd`, `ghco`, `ghck`, `ghst`, `ghweb` (GitHub CLI) |
 
 A group is the block between `# @group <item>` and `# @end` in the file;
