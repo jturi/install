@@ -43,6 +43,7 @@ done
 
 # Run a command string in a pseudo-terminal: util-linux and BSD (macOS)
 # script(1) take different arguments.
+# shellcheck disable=SC2329 # called from the check helpers below
 pty_run() {
   if script --version 2>/dev/null | grep -q util-linux; then
     script -qec "$1" /dev/null

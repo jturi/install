@@ -924,8 +924,20 @@ check catalog-duplicate-key "1" "$( (catalog_load "${WORK}/dup.txt" linux 0) 2>&
 printf '%s\n' 'a|x|X|linux|on|pkg' 'a|x|X2|macos|on|pkg' >"${WORK}/dup2.txt"
 check catalog-same-key-other-platform "1" "$( (catalog_load "${WORK}/dup2.txt" linux 0; echo "${#CAT_ITEM[@]}") 2>/dev/null)"
 
-# `sh setup.sh` re-runs itself under bash.
+# `sh setup.sh` re-runs itself under bash (macOS sh is bash in POSIX mode).
 check sh-reexecs-bash "1" "$(sh "${ROOT}/setup.sh" --help 2>/dev/null | grep -c -- '--dry-run      Print')"
+# Sourced into a shell that is not plain bash, setup.sh refuses: it must never
+# exec a full install in place of that shell. An unsupported distro makes any
+# run that gets past the guard stop before it changes anything.
+printf 'ID=gentoo\n' >"${WORK}/os-gentoo"
+src_env=(env HOME="${WORK}/src-home" TARGET_HOME="${WORK}/src-home" UNAME_S=Linux OS_RELEASE_FILE="${WORK}/os-gentoo")
+check sourced-sh-refuses "1" "$(cd "${ROOT}" && "${src_env[@]}" sh -c '. ./setup.sh; echo "rc=$?"' </dev/null 2>&1 | grep -c 'source it from bash')"
+if command -v zsh >/dev/null 2>&1; then
+  check sourced-zsh-refuses "1" "$(cd "${ROOT}" && "${src_env[@]}" zsh -fc 'source ./setup.sh; echo "rc=$?"' </dev/null 2>&1 | grep -c 'source it from bash')"
+  check sourced-zsh-shell-survives "rc=1" "$(cd "${ROOT}" && "${src_env[@]}" zsh -fc 'source ./setup.sh; echo "rc=$?"' </dev/null 2>/dev/null)"
+  check zsh-reexecs-bash "1" "$(zsh -f "${ROOT}/setup.sh" --help 2>/dev/null | grep -c -- '--dry-run      Print')"
+fi
+check sourced-bash-ok "ok" "$(bash -c 'source "$1" && echo ok' _ "${ROOT}/setup.sh" 2>&1)"
 # Version line: git describe, or the .source file from bootstrap.sh.
 check version-line "1" "$(OS_RELEASE_FILE="${WORK}/os-debian" TARGET_HOME="${WORK}/vh" bash "${ROOT}/setup.sh" --dry-run --yes </dev/null 2>&1 | grep -c '==> install .*, bash ')"
 

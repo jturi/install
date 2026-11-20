@@ -15,8 +15,32 @@
 #                   [--ssh-local-only]
 #                   [--terminal | --no-terminal] [--ssh-key | --no-ssh-key]
 #                   [--zsh-default | --no-zsh-default] [--debug] [--no-log]
-# Started as `sh setup.sh`? Rerun under bash before any bash-only syntax.
-if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
+# Started as `sh setup.sh` or `zsh setup.sh`? Rerun under bash before any
+# bash-only syntax. Sourced into such a shell, refuse instead: `exec bash "$0"`
+# would replace that shell with a full install. POSIX sh cannot tell sourcing
+# from running, so the script name decides; zsh says so in ZSH_EVAL_CONTEXT.
+if [ -z "${BASH_VERSION:-}" ]; then
+  _setup_sourced=1
+  case "${0##*/}" in setup.sh) _setup_sourced=0 ;; esac
+  case "${ZSH_EVAL_CONTEXT:-}" in *:file*) _setup_sourced=1 ;; esac
+  if [ "${_setup_sourced}" = 1 ]; then
+    unset _setup_sourced
+    echo "setup.sh: run it (./setup.sh); source it from bash only" >&2
+    # shellcheck disable=SC2317 # reached when `return` fails: not sourced after all
+    return 1 2>/dev/null || exit 1
+  fi
+  exec bash "$0" "$@"
+fi
+# macOS /bin/sh is bash 3.2 in POSIX mode, where process substitution (used
+# below and in lib/) is off. Turn POSIX mode off for a run; a POSIX-mode bash
+# that sources this file is the caller's shell, so refuse there.
+if shopt -qo posix; then
+  if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    echo "setup.sh: source it from bash only, not in POSIX mode (set +o posix)" >&2
+    return 1
+  fi
+  set +o posix
+fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1125,7 +1149,7 @@ login_shell() {
     # No passwd entry is an unknown shell, not an error (pipefail would abort).
     getent passwd "${user}" | cut -d: -f7 || true
   elif [[ "${UNAME_S}" == "Darwin" ]]; then
-    dscl . -read "/Users/${user}" UserShell | awk '{print $2}'
+    dscl . -read "/Users/${user}" UserShell 2>/dev/null | awk '{print $2}' || true
   else
     printf '%s\n' "${SHELL:-}"
   fi
